@@ -148,15 +148,16 @@
     const statuses = ["Новый", "В обработке", "Отправлен", "Завершён", "Отменён"];
 
     tabContent.innerHTML = `
+      <p style="color:var(--text-muted); font-size:13px">
+        Это список того, что люди выбрали перед тем, как написать вам в Telegram — контакты и детали смотрите там, в переписке.
+      </p>
       <table class="admin-table">
-        <thead><tr><th>№</th><th>Дата</th><th>Клиент</th><th>Телефон</th><th>Товары</th><th>Сумма</th><th>Статус</th></tr></thead>
+        <thead><tr><th>№</th><th>Дата</th><th>Товары</th><th>Сумма</th><th>Статус</th></tr></thead>
         <tbody>
           ${orders.map(o => `
             <tr data-id="${o.id}">
               <td>${o.id}</td>
               <td>${new Date(o.date).toLocaleString("ru-RU")}</td>
-              <td>${o.name}</td>
-              <td>${o.phone}</td>
               <td>${o.items.map(i => i.name + " ×" + i.qty).join("<br>")}</td>
               <td>${formatPrice(o.total)}</td>
               <td>
