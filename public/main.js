@@ -7,11 +7,14 @@ function telegramLink(text) {
   return "https://t.me/" + TELEGRAM_USERNAME + "?text=" + encodeURIComponent(text);
 }
 
-function productCardHtml(p) {
+function productCardHtml(p, isNew) {
   const cat = getCategory(p.category);
   return `
     <a class="product-card" href="product.html?id=${encodeURIComponent(p.id)}">
-      <div class="product-thumb" style="background:${cat.gradient}">${cat.emoji}</div>
+      <div class="product-thumb" style="background:${cat.gradient}">
+        ${isNew ? '<span class="badge-new">Новинка</span>' : ""}
+        ${cat.emoji}
+      </div>
       <div class="product-body">
         <span class="product-cat-tag">${cat.short}</span>
         <span class="product-name">${p.name}</span>

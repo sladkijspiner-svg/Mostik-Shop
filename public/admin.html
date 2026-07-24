@@ -5,6 +5,7 @@
 <title>Админ-панель — MINIFIG STORE</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%A7%B1%3C/text%3E%3C/svg%3E">
 </head>
 <body>
 
@@ -16,7 +17,7 @@
       <a href="catalog.html">Каталог</a>
       <a href="find.html">Найти фигурку</a>
     </nav>
-    <a class="cart-link" href="cart.html">🛒 Корзина <span class="cart-badge">0</span></a>
+    <a class="cart-link" href="cart.html">🛒 <span class="cart-text">Корзина</span> <span class="cart-badge">0</span></a>
   </div>
 </header>
 
@@ -127,10 +128,12 @@
           <button class="btn btn-outline btn-small" id="refresh-products-btn">Обновить список</button>
         </div>
       </div>
-      <table class="admin-table">
-        <thead><tr><th>Id</th><th>Название</th><th>Категория</th><th>Цена</th><th>Остаток</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="admin-table">
+          <thead><tr><th>Id</th><th>Название</th><th>Категория</th><th>Цена</th><th>Остаток</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
     `;
 
     document.getElementById("refresh-products-btn").addEventListener("click", renderProductsTab);
@@ -151,24 +154,26 @@
       <p style="color:var(--text-muted); font-size:13px">
         Это список того, что люди выбрали перед тем, как написать вам в Telegram — контакты и детали смотрите там, в переписке.
       </p>
-      <table class="admin-table">
-        <thead><tr><th>№</th><th>Дата</th><th>Товары</th><th>Сумма</th><th>Статус</th></tr></thead>
-        <tbody>
-          ${orders.map(o => `
-            <tr data-id="${o.id}">
-              <td>${o.id}</td>
-              <td>${new Date(o.date).toLocaleString("ru-RU")}</td>
-              <td>${o.items.map(i => i.name + " ×" + i.qty).join("<br>")}</td>
-              <td>${formatPrice(o.total)}</td>
-              <td>
-                <select class="status-select">
-                  ${statuses.map(s => `<option value="${s}" ${s === o.status ? "selected" : ""}>${s}</option>`).join("")}
-                </select>
-              </td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="admin-table">
+          <thead><tr><th>№</th><th>Дата</th><th>Товары</th><th>Сумма</th><th>Статус</th></tr></thead>
+          <tbody>
+            ${orders.map(o => `
+              <tr data-id="${o.id}">
+                <td>${o.id}</td>
+                <td>${new Date(o.date).toLocaleString("ru-RU")}</td>
+                <td>${o.items.map(i => i.name + " ×" + i.qty).join("<br>")}</td>
+                <td>${formatPrice(o.total)}</td>
+                <td>
+                  <select class="status-select">
+                    ${statuses.map(s => `<option value="${s}" ${s === o.status ? "selected" : ""}>${s}</option>`).join("")}
+                  </select>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
 
     tabContent.querySelectorAll("tr[data-id]").forEach(row => {
@@ -193,25 +198,27 @@
     const statuses = ["Новый", "В поиске", "Найдено", "Не найдено"];
 
     tabContent.innerHTML = `
-      <table class="admin-table">
-        <thead><tr><th>№</th><th>Дата</th><th>Имя</th><th>Связь</th><th>Что ищет</th><th>Статус</th></tr></thead>
-        <tbody>
-          ${requests.map(r => `
-            <tr data-id="${r.id}">
-              <td>${r.id}</td>
-              <td>${new Date(r.date).toLocaleString("ru-RU")}</td>
-              <td>${r.name}</td>
-              <td>${r.contact}</td>
-              <td>${r.description}</td>
-              <td>
-                <select class="req-status-select">
-                  ${statuses.map(s => `<option value="${s}" ${s === r.status ? "selected" : ""}>${s}</option>`).join("")}
-                </select>
-              </td>
-            </tr>
-          `).join("")}
-        </tbody>
-      </table>
+      <div class="table-scroll">
+        <table class="admin-table">
+          <thead><tr><th>№</th><th>Дата</th><th>Имя</th><th>Связь</th><th>Что ищет</th><th>Статус</th></tr></thead>
+          <tbody>
+            ${requests.map(r => `
+              <tr data-id="${r.id}">
+                <td>${r.id}</td>
+                <td>${new Date(r.date).toLocaleString("ru-RU")}</td>
+                <td>${r.name}</td>
+                <td>${r.contact}</td>
+                <td>${r.description}</td>
+                <td>
+                  <select class="req-status-select">
+                    ${statuses.map(s => `<option value="${s}" ${s === r.status ? "selected" : ""}>${s}</option>`).join("")}
+                  </select>
+                </td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
 
     tabContent.querySelectorAll("tr[data-id]").forEach(row => {
