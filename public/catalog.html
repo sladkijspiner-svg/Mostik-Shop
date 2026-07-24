@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Каталог — MINIFIG STORE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo">MINIFIG <span style="color:#a41f1f">STORE</span></div>
+    <nav class="nav-links">
+      <a href="index.html">Главная</a>
+      <a href="catalog.html" class="active">Каталог</a>
+      <a href="find.html">Найти фигурку</a>
+    </nav>
+    <form class="search-box" id="header-search-form">
+      <input type="text" id="header-search-input" placeholder="Поиск товаров">
+      <button type="submit">🔍</button>
+    </form>
+    <a class="cart-link" href="cart.html">🛒 Корзина <span class="cart-badge">0</span></a>
+  </div>
+</header>
+
+<div class="container">
+
+  <div class="breadcrumbs"><a href="index.html">Главная</a> / Каталог</div>
+
+  <h1 class="section-title" id="catalog-title" style="margin-top:0">Каталог</h1>
+
+  <div class="filters-bar">
+    <div class="chip-row" id="category-chips"></div>
+  </div>
+  <div class="filters-bar">
+    <input type="text" id="search-input" placeholder="Поиск по названию...">
+    <select id="sort-select">
+      <option value="default">Сортировка</option>
+      <option value="price-asc">Сначала дешевле</option>
+      <option value="price-desc">Сначала дороже</option>
+      <option value="name-asc">По названию А-Я</option>
+    </select>
+  </div>
+
+  <div class="product-grid" id="product-grid"></div>
+  <div class="empty-state" id="empty-state" style="display:none">
+    <div class="big-emoji">🔎</div>
+    <p>Ничего не найдено. Попробуйте изменить фильтр или запрос.</p>
+  </div>
+
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    MINIFIG STORE — минифигурки Marvel, DC и другие серии. Работаем по всей России.
+    &nbsp;·&nbsp;<a href="admin.html">Админ-панель</a>
+  </div>
+</footer>
+
+<script src="products.js"></script>
+<script src="cart.js"></script>
+<script src="main.js"></script>
+<script>
+  const params = new URLSearchParams(window.location.search);
+  let activeCat = params.get("cat") || "all";
+  let searchQuery = params.get("q") || "";
+
+  document.getElementById("search-input").value = searchQuery;
+
+  function renderChips() {
+    const chips = [{ slug: "all", title: "Все товары" }, ...CATEGORIES];
+    document.getElementById("category-chips").innerHTML = chips.map(c =>
+      `<span class="chip ${activeCat === c.slug ? "active" : ""}" data-slug="${c.slug}">${c.title}</span>`
+    ).join("");
+    document.querySelectorAll(".chip").forEach(chip => {
+      chip.addEventListener("click", () => {
+        activeCat = chip.dataset.slug;
+        renderChips();
+        renderGrid();
+      });
+    });
+  }
+
+  function renderGrid() {
+    let products = loadProducts();
+
+    if (activeCat !== "all") {
+      products = products.filter(p => p.category === activeCat);
+    }
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      products = products.filter(p => p.name.toLowerCase().includes(q));
+    }
+
+    const sort = document.getElementById("sort-select").value;
+    if (sort === "price-asc") products.sort((a, b) => a.price - b.price);
+    if (sort === "price-desc") products.sort((a, b) => b.price - a.price);
+    if (sort === "name-asc") products.sort((a, b) => a.name.localeCompare(b.name, "ru"));
+
+    const grid = document.getElementById("product-grid");
+    const empty = document.getElementById("empty-state");
+
+    if (products.length === 0) {
+      grid.innerHTML = "";
+      empty.style.display = "block";
+    } else {
+      empty.style.display = "none";
+      grid.innerHTML = products.map(productCardHtml).join("");
+    }
+
+    const cat = activeCat === "all" ? null : getCategory(activeCat);
+    document.getElementById("catalog-title").textContent = cat ? cat.title : "Каталог";
+  }
+
+  document.getElementById("search-input").addEventListener("input", e => {
+    searchQuery = e.target.value.trim();
+    renderGrid();
+  });
+  document.getElementById("sort-select").addEventListener("change", renderGrid);
+
+  renderChips();
+  (async () => {
+    await initProducts();
+    renderGrid();
+  })();
+</script>
+</body>
+</html>

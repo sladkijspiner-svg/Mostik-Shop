@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Корзина — MINIFIG STORE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo">MINIFIG <span style="color:#a41f1f">STORE</span></div>
+    <nav class="nav-links">
+      <a href="index.html">Главная</a>
+      <a href="catalog.html">Каталог</a>
+      <a href="find.html">Найти фигурку</a>
+    </nav>
+    <form class="search-box" id="header-search-form">
+      <input type="text" placeholder="Поиск товаров">
+      <button type="submit">🔍</button>
+    </form>
+    <a class="cart-link" href="cart.html">🛒 Корзина <span class="cart-badge">0</span></a>
+  </div>
+</header>
+
+<div class="container">
+  <h1 class="section-title" style="margin-top:0">Корзина</h1>
+  <div id="cart-content"></div>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    MINIFIG STORE — минифигурки Marvel, DC и другие серии. Работаем по всей России.
+    &nbsp;·&nbsp;<a href="admin.html">Админ-панель</a>
+  </div>
+</footer>
+
+<script src="products.js"></script>
+<script src="cart.js"></script>
+<script src="main.js"></script>
+<script>
+  function render() {
+    const items = getCartDetailed();
+    const el = document.getElementById("cart-content");
+
+    if (items.length === 0) {
+      el.innerHTML = `
+        <div class="empty-state">
+          <div class="big-emoji">🛒</div>
+          <p>Ваша корзина пуста.</p>
+          <a class="btn btn-primary" href="catalog.html">Перейти в каталог</a>
+        </div>`;
+      return;
+    }
+
+    const rows = items.map(({ product, qty, lineTotal }) => {
+      const cat = getCategory(product.category);
+      return `
+        <tr data-id="${product.id}">
+          <td>
+            <div class="cart-item-name">
+              <div class="cart-item-emoji" style="background:${cat.gradient}">${cat.emoji}</div>
+              <div>
+                <a href="product.html?id=${product.id}">${product.name}</a><br>
+                <span class="product-cat-tag">${cat.short}</span>
+              </div>
+            </div>
+          </td>
+          <td>${formatPrice(product.price)}</td>
+          <td>
+            <div class="qty-selector">
+              <button type="button" class="qty-minus">−</button>
+              <input type="text" value="${qty}" readonly>
+              <button type="button" class="qty-plus">+</button>
+            </div>
+          </td>
+          <td>${formatPrice(lineTotal)}</td>
+          <td><button class="btn btn-outline btn-small remove-btn">Удалить</button></td>
+        </tr>`;
+    }).join("");
+
+    const total = getCartTotal();
+
+    el.innerHTML = `
+      <table class="cart-table">
+        <thead>
+          <tr><th>Товар</th><th>Цена</th><th>Количество</th><th>Сумма</th><th></th></tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="cart-summary">
+        <div class="cart-summary-row"><span>Товаров</span><span>${getCartCount()} шт.</span></div>
+        <div class="cart-summary-row total"><span>Итого</span><span>${formatPrice(total)}</span></div>
+        <a class="btn btn-primary btn-block" href="checkout.html">Оформить заказ</a>
+      </div>
+    `;
+
+    el.querySelectorAll("tr[data-id]").forEach(row => {
+      const id = row.dataset.id;
+      const item = items.find(i => i.product.id === id);
+      row.querySelector(".qty-minus").addEventListener("click", () => {
+        setCartQty(id, Math.max(0, item.qty - 1));
+        render();
+      });
+      row.querySelector(".qty-plus").addEventListener("click", () => {
+        setCartQty(id, Math.min(item.product.stock, item.qty + 1));
+        render();
+      });
+      row.querySelector(".remove-btn").addEventListener("click", () => {
+        removeFromCart(id);
+        render();
+      });
+    });
+  }
+
+  (async () => {
+    await initProducts();
+    render();
+  })();
+</script>
+</body>
+</html>

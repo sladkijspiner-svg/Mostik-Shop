@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Оформление заказа — MINIFIG STORE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo">MINIFIG <span style="color:#a41f1f">STORE</span></div>
+    <nav class="nav-links">
+      <a href="index.html">Главная</a>
+      <a href="catalog.html">Каталог</a>
+      <a href="find.html">Найти фигурку</a>
+    </nav>
+    <form class="search-box" id="header-search-form">
+      <input type="text" placeholder="Поиск товаров">
+      <button type="submit">🔍</button>
+    </form>
+    <a class="cart-link" href="cart.html">🛒 Корзина <span class="cart-badge">0</span></a>
+  </div>
+</header>
+
+<div class="container">
+  <h1 class="section-title" style="margin-top:0">Оформление заказа</h1>
+  <div id="checkout-content"></div>
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    MINIFIG STORE — минифигурки Marvel, DC и другие серии. Работаем по всей России.
+    &nbsp;·&nbsp;<a href="admin.html">Админ-панель</a>
+  </div>
+</footer>
+
+<script src="products.js"></script>
+<script src="cart.js"></script>
+<script src="main.js"></script>
+<script>
+  const ORDERS_KEY = "minifig_orders_v1";
+
+  function loadOrders() {
+    try {
+      return JSON.parse(localStorage.getItem(ORDERS_KEY)) || [];
+    } catch (e) { return []; }
+  }
+
+  function saveOrders(orders) {
+    localStorage.setItem(ORDERS_KEY, JSON.stringify(orders));
+  }
+
+  const content = document.getElementById("checkout-content");
+  let items = [];
+
+  function deliveryLabel(delivery) {
+    if (delivery === "pickup") return "Самовывоз";
+    if (delivery === "post") return "Почтой России";
+    return "Курьером";
+  }
+
+  function buildOrderMessage(order) {
+    const lines = [
+      `🧱 Новый заказ ${order.id}`,
+      `Имя: ${order.name}`,
+      `Телефон: ${order.phone}`,
+      `Получение: ${deliveryLabel(order.delivery)}`
+    ];
+    if (order.address) lines.push(`Адрес: ${order.address}`);
+    lines.push("", "Товары:");
+    order.items.forEach(i => lines.push(`- ${i.name} × ${i.qty} — ${formatPrice(i.price * i.qty)}`));
+    lines.push("", `Итого: ${formatPrice(order.total)}`);
+    if (order.comment) lines.push("", `Комментарий: ${order.comment}`);
+    return lines.join("\n");
+  }
+
+  function renderForm() {
+    const total = getCartTotal();
+    content.innerHTML = `
+      <div class="checkout-grid">
+        <form id="checkout-form">
+          <div class="form-group">
+            <label>Имя и фамилия</label>
+            <input type="text" name="name" required placeholder="Иван Иванов">
+          </div>
+          <div class="form-group">
+            <label>Телефон</label>
+            <input type="tel" name="phone" required placeholder="+7 900 000-00-00">
+          </div>
+          <div class="form-group">
+            <label>Способ получения</label>
+            <div class="radio-row">
+              <label class="radio-option"><input type="radio" name="delivery" value="courier" checked> Курьером</label>
+              <label class="radio-option"><input type="radio" name="delivery" value="pickup"> Самовывоз</label>
+              <label class="radio-option"><input type="radio" name="delivery" value="post"> Почтой России</label>
+            </div>
+          </div>
+          <div class="form-group" id="address-group">
+            <label>Адрес доставки</label>
+            <input type="text" name="address" placeholder="Город, улица, дом, квартира">
+          </div>
+          <div class="form-group">
+            <label>Комментарий к заказу</label>
+            <textarea name="comment" placeholder="Необязательно"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Подтвердить заказ · ${formatPrice(total)}</button>
+        </form>
+
+        <div class="order-summary-box">
+          <h3 style="margin-top:0">Ваш заказ</h3>
+          ${items.map(i => `
+            <div class="item-row">
+              <span>${i.product.name} × ${i.qty}</span>
+              <span>${formatPrice(i.lineTotal)}</span>
+            </div>`).join("")}
+          <div class="cart-summary-row total"><span>Итого</span><span>${formatPrice(total)}</span></div>
+        </div>
+      </div>
+    `;
+
+    const form = document.getElementById("checkout-form");
+    const addressGroup = document.getElementById("address-group");
+
+    form.querySelectorAll('input[name="delivery"]').forEach(radio => {
+      radio.addEventListener("change", () => {
+        addressGroup.style.display = radio.value === "pickup" ? "none" : "block";
+      });
+    });
+
+    form.addEventListener("submit", e => {
+      e.preventDefault();
+      const data = new FormData(form);
+      const delivery = data.get("delivery");
+
+      const order = {
+        id: "ORD-" + Date.now().toString().slice(-6),
+        date: new Date().toISOString(),
+        status: "Новый",
+        name: data.get("name"),
+        phone: data.get("phone"),
+        delivery: delivery,
+        address: delivery === "pickup" ? "" : data.get("address"),
+        comment: data.get("comment"),
+        items: items.map(i => ({ id: i.product.id, name: i.product.name, qty: i.qty, price: i.product.price })),
+        total: total
+      };
+
+      const orders = loadOrders();
+      orders.push(order);
+      saveOrders(orders);
+      clearCart();
+
+      const tgLink = telegramLink(buildOrderMessage(order));
+      window.open(tgLink, "_blank");
+      renderSuccess(order, tgLink);
+    });
+  }
+
+  function renderSuccess(order, tgLink) {
+    content.innerHTML = `
+      <div class="success-box">
+        <div class="big-emoji">✅</div>
+        <h2>Заказ принят!</h2>
+        <p>Мы открыли Telegram с готовым сообщением — просто нажмите «Отправить» в чате, чтобы подтвердить заказ.</p>
+        <div class="order-number">${order.id}</div>
+        <div style="display:flex; gap:12px; justify-content:center; flex-wrap:wrap">
+          <a class="btn btn-primary" href="${tgLink}" target="_blank">Открыть Telegram ещё раз</a>
+          <a class="btn btn-outline" href="catalog.html">Продолжить покупки</a>
+        </div>
+      </div>
+    `;
+  }
+
+  (async () => {
+    await initProducts();
+    items = getCartDetailed();
+
+    if (items.length === 0) {
+      content.innerHTML = `
+        <div class="empty-state">
+          <div class="big-emoji">🛒</div>
+          <p>Корзина пуста — сначала добавьте товары.</p>
+          <a class="btn btn-primary" href="catalog.html">Перейти в каталог</a>
+        </div>`;
+    } else {
+      renderForm();
+    }
+  })();
+</script>
+</body>
+</html>

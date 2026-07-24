@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Товар — MINIFIG STORE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo">MINIFIG <span style="color:#a41f1f">STORE</span></div>
+    <nav class="nav-links">
+      <a href="index.html">Главная</a>
+      <a href="catalog.html">Каталог</a>
+      <a href="find.html">Найти фигурку</a>
+    </nav>
+    <form class="search-box" id="header-search-form">
+      <input type="text" placeholder="Поиск товаров">
+      <button type="submit">🔍</button>
+    </form>
+    <a class="cart-link" href="cart.html">🛒 Корзина <span class="cart-badge">0</span></a>
+  </div>
+</header>
+
+<div class="container" id="page-content">
+  <!-- заполняется скриптом -->
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    MINIFIG STORE — минифигурки Marvel, DC и другие серии. Работаем по всей России.
+    &nbsp;·&nbsp;<a href="admin.html">Админ-панель</a>
+  </div>
+</footer>
+
+<script src="products.js"></script>
+<script src="cart.js"></script>
+<script src="main.js"></script>
+<script>
+(async () => {
+  await initProducts();
+
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("id");
+  const product = getProductById(id);
+  const content = document.getElementById("page-content");
+
+  if (!product) {
+    content.innerHTML = `
+      <div class="empty-state">
+        <div class="big-emoji">😕</div>
+        <p>Товар не найден.</p>
+        <a class="btn btn-primary" href="catalog.html">Вернуться в каталог</a>
+      </div>`;
+  } else {
+    const cat = getCategory(product.category);
+
+    content.innerHTML = `
+      <div class="breadcrumbs">
+        <a href="index.html">Главная</a> /
+        <a href="catalog.html?cat=${cat.slug}">${cat.title}</a> /
+        ${product.name}
+      </div>
+
+      <div class="product-detail">
+        <div class="product-detail-thumb" style="background:${cat.gradient}">${cat.emoji}</div>
+        <div class="product-detail-info">
+          <span class="product-cat-tag">${cat.short} · Артикул ${product.sku}</span>
+          <h1>${product.name}</h1>
+          <p style="color:var(--text-muted); line-height:1.6">${product.desc}</p>
+          <div class="product-detail-price">${formatPrice(product.price)}</div>
+          <p class="product-stock">${product.stock > 0 ? "В наличии: " + product.stock + " шт." : "Нет в наличии"}</p>
+
+          <div class="detail-actions">
+            <div class="qty-selector">
+              <button type="button" id="qty-minus">−</button>
+              <input type="text" id="qty-input" value="1" readonly>
+              <button type="button" id="qty-plus">+</button>
+            </div>
+            <button class="btn btn-primary" id="add-to-cart-btn" ${product.stock === 0 ? "disabled" : ""}>
+              Добавить в корзину
+            </button>
+          </div>
+          <div id="added-msg" style="color:#7ed17e; font-size:14px; display:none">Добавлено в корзину ✓</div>
+        </div>
+      </div>
+
+      <h2 class="section-title">Похожие товары</h2>
+      <div class="product-grid" id="related-grid"></div>
+    `;
+
+    let qty = 1;
+    const qtyInput = document.getElementById("qty-input");
+    document.getElementById("qty-minus").addEventListener("click", () => {
+      qty = Math.max(1, qty - 1);
+      qtyInput.value = qty;
+    });
+    document.getElementById("qty-plus").addEventListener("click", () => {
+      qty = Math.min(product.stock, qty + 1);
+      qtyInput.value = qty;
+    });
+    document.getElementById("add-to-cart-btn").addEventListener("click", () => {
+      addToCart(product.id, qty);
+      const msg = document.getElementById("added-msg");
+      msg.style.display = "block";
+      setTimeout(() => (msg.style.display = "none"), 2000);
+    });
+
+    const related = loadProducts()
+      .filter(p => p.category === product.category && p.id !== product.id)
+      .slice(0, 4);
+    document.getElementById("related-grid").innerHTML = related.map(productCardHtml).join("");
+  }
+})();
+</script>
+</body>
+</html>

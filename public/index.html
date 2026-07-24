@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>MINIFIG STORE — минифигурки Marvel, DC и не только</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="logo">MINIFIG <span style="color:#a41f1f">STORE</span></div>
+    <nav class="nav-links">
+      <a href="index.html" class="active">Главная</a>
+      <a href="catalog.html">Каталог</a>
+      <a href="find.html">Найти фигурку</a>
+    </nav>
+    <form class="search-box" id="header-search-form">
+      <input type="text" placeholder="Поиск товаров">
+      <button type="submit">🔍</button>
+    </form>
+    <a class="cart-link" href="cart.html">🛒 Корзина <span class="cart-badge">0</span></a>
+  </div>
+</header>
+
+<div class="container">
+
+  <section class="hero">
+    <div>
+      <div class="hero-title">
+        <span class="highlight">МИНИФИГУРКИ</span><br>
+        <span class="highlight">НА ЛЮБОЙ ВКУС</span>
+      </div>
+      <a href="catalog.html" class="btn btn-primary">Смотреть каталог →</a>
+    </div>
+    <div class="hero-sub">
+      <b>Более 500 фигурок</b> следующих серий:
+      <ul>
+        <li>Marvel</li>
+        <li>DC</li>
+        <li>Прочее</li>
+        <li>Паки</li>
+        <li>Наборы</li>
+      </ul>
+    </div>
+    <div class="hero-emoji">🧱</div>
+  </section>
+
+  <h2 class="section-title">Категории</h2>
+  <div class="category-grid" id="category-grid"></div>
+
+  <section class="hero" style="margin-top:0">
+    <div>
+      <h2 style="margin:0 0 10px; font-size:26px">Не нашли нужную фигурку?</h2>
+      <p style="color:var(--text-muted); max-width:480px; line-height:1.6">
+        Опишите, какого персонажа или набор вы ищете — поможем найти любую минифигурку,
+        даже если её нет в каталоге.
+      </p>
+      <a href="find.html" class="btn btn-primary">Оставить запрос →</a>
+    </div>
+    <div class="hero-emoji">🔍</div>
+  </section>
+
+  <h2 class="section-title">Новинки</h2>
+  <div class="product-grid" id="new-products"></div>
+
+</div>
+
+<footer class="site-footer">
+  <div class="container">
+    MINIFIG STORE — минифигурки Marvel, DC и другие серии. Работаем по всей России.
+    &nbsp;·&nbsp;<a href="admin.html">Админ-панель</a>
+  </div>
+</footer>
+
+<script src="products.js"></script>
+<script src="cart.js"></script>
+<script src="main.js"></script>
+<script>
+  renderCategoryGrid("category-grid");
+
+  (async () => {
+    await initProducts();
+    const all = loadProducts();
+    const newest = all.slice(-8).reverse();
+    document.getElementById("new-products").innerHTML = newest.map(productCardHtml).join("");
+  })();
+</script>
+</body>
+</html>
