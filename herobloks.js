@@ -382,4 +382,30 @@ async function fetchFigureDetails(href) {
   };
 }
 
-module.exports = { findFigureMatches, findFigureByName, groupFiguresByName, fetchFigureDetails, compactCode };
+// Слаг бренда из ссылки на фигурку: "/figures/7400/pogo/pg-206/deadpool-..."
+// -> "pogo". Он же использовался при сборке базы data/herobloks_index.json,
+// поэтому совпадает с ключами INDEX.brandPrefix.
+function brandSlugFromHref(href) {
+  const parts = (href || "").split("/").filter(Boolean);
+  return (parts[2] || "").toLowerCase();
+}
+
+/**
+ * Код для поиска этой фигурки на маркетплейсах (Ozon/Wildberries/AliExpress):
+ * артикул без дефисов/пробелов, в нижнем регистре. У большинства брендов
+ * (Pogo, Kopf...) в самом артикуле уже есть буквенный префикс — "PG-206" ->
+ * "pg206". А вот у некоторых (например Xinh) на herobloks.com в поле Serial
+ * указаны только цифры ("450") — в продаже же эти фигурки идут под кодом с
+ * префиксом бренда ("XH450"), поэтому если в артикуле нет ни одной буквы,
+ * приставляем префикс бренда из той же карты, что используется для разбора
+ * кодов покупателей (INDEX.brandPrefix).
+ */
+function marketplaceQuery(href, serial) {
+  const compact = compactCode(serial || "");
+  if (!compact) return "";
+  if (/[A-Z]/.test(compact)) return compact.toLowerCase();
+  const prefix = (INDEX.brandPrefix && INDEX.brandPrefix[brandSlugFromHref(href)]) || "";
+  return (prefix + compact).toLowerCase();
+}
+
+module.exports = { findFigureMatches, findFigureByName, groupFiguresByName, fetchFigureDetails, compactCode, marketplaceQuery };

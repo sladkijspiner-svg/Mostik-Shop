@@ -95,7 +95,8 @@ app.get("/api/herobloks/details", async (req, res) => {
   if (!href || !href.startsWith("/figures/")) return res.status(400).json({ error: "bad_href" });
   try {
     const details = await herobloks.fetchFigureDetails(href);
-    res.json(details);
+    const marketplaceCode = herobloks.marketplaceQuery(href, details.serial || "");
+    res.json({ ...details, marketplaceCode });
   } catch (e) {
     res.status(500).json({ error: "fetch_failed" });
   }
