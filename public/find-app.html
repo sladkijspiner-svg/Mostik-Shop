@@ -85,6 +85,11 @@
   .item-card .label b { display: block; font-size: 13px; }
   .item-card .label span { color: var(--hint); font-size: 12px; }
   .empty { color: var(--hint); padding: 30px 0; text-align: center; }
+  .suggest-list { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .suggest-chip {
+    border: 1px solid var(--card-border); background: var(--card-bg); color: var(--link);
+    border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer;
+  }
   .loading { color: var(--hint); padding: 30px 0; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px; }
 
   /* --- карточка с полной информацией о фигурке --- */
@@ -195,7 +200,7 @@
 
     const groups = data.groups || [];
     if (groups.length === 0) {
-      contentEl.innerHTML = '<div class="empty">Ничего не нашлось. Попробуйте другой запрос.</div>';
+      renderEmptyWithSuggestions(data.suggestions || []);
       return;
     }
 
@@ -209,6 +214,33 @@
     }
 
     renderGroupList(groups);
+  }
+
+  // Ничего не нашлось — если похоже на опечатку, предлагаем варианты
+  // «Возможно, вы имели в виду?», по клику на которые запускаем поиск заново.
+  function renderEmptyWithSuggestions(suggestions) {
+    if (!suggestions || suggestions.length === 0) {
+      contentEl.innerHTML = '<div class="empty">Ничего не нашлось. Попробуйте другой запрос.</div>';
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.innerHTML = `
+      <div class="empty" style="padding-bottom:10px">Ничего не нашлось. Возможно, вы имели в виду:</div>
+      <div class="suggest-list"></div>
+    `;
+    const list = wrap.querySelector(".suggest-list");
+    suggestions.forEach(s => {
+      const chip = document.createElement("button");
+      chip.className = "suggest-chip";
+      chip.textContent = s.label;
+      chip.addEventListener("click", () => {
+        qInput.value = s.query;
+        doSearch(s.query);
+      });
+      list.appendChild(chip);
+    });
+    contentEl.innerHTML = "";
+    contentEl.appendChild(wrap);
   }
 
   function renderGroupList(groups) {
