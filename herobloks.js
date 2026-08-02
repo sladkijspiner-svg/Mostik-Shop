@@ -198,7 +198,63 @@ function nameFromHref(href) {
     .join(" ");
 }
 
-let NAME_LIST = null; // [{href, brand, serial, name, nameLower}]
+// Отделяет "хвостовые" пометки в скобках вроде "(BigFig)", "(MCU)" от
+// основного имени: "Symbiote Wolverine (BigFig)" -> { base: "Symbiote Wolverine", tags: ["BigFig"] }.
+function splitNameTags(name) {
+  const tags = [];
+  const base = name
+    .replace(/\(([^()]*)\)/g, (_, inner) => {
+      tags.push(inner.trim());
+      return " ";
+    })
+    .replace(/\s+/g, " ")
+    .trim();
+  return { base, tags };
+}
+
+// Синонимы "переодетых" версий персонажа — чтобы бот сам понимал, что
+// "Symbiote Wolverine", "Wolverine Venom" и "Venomized Wolverine" — это
+// один и тот же образ, и объединял их в одну категорию при поиске.
+const QUALIFIER_SYNONYMS = {
+  venom: "Venom",
+  symbiote: "Venom",
+  symbiotic: "Venom",
+  venomized: "Venom",
+  venomised: "Venom",
+  zombie: "Zombie",
+  zombified: "Zombie",
+  gold: "Gold",
+  golden: "Gold",
+  chrome: "Chrome",
+  chromed: "Chrome",
+  stealth: "Stealth",
+  evil: "Dark",
+  dark: "Dark"
+};
+
+// Приводит название образа к "каноническому" виду, объединяя синонимичные
+// варианты (см. QUALIFIER_SYNONYMS) в одну категорию, независимо от порядка
+// слов и формулировки. Метки в скобках вроде "(BigFig)" сохраняются отдельно —
+// это формат/размер, а не другой образ.
+function canonicalizeName(name) {
+  const { base, tags } = splitNameTags(name);
+  const words = base.split(" ").filter(Boolean);
+  let synonymTag = null;
+  const rest = [];
+  for (const w of words) {
+    const key = w.toLowerCase();
+    if (!synonymTag && QUALIFIER_SYNONYMS[key]) {
+      synonymTag = QUALIFIER_SYNONYMS[key];
+    } else {
+      rest.push(w);
+    }
+  }
+  const canonicalBase = synonymTag ? `${synonymTag} ${rest.join(" ")}`.trim() : base;
+  const suffix = tags.length ? " (" + tags.join(") (") + ")" : "";
+  return (canonicalBase + suffix).trim();
+}
+
+let NAME_LIST = null; // [{href, brand, serial, name, nameLower, baseLower, label}]
 function buildNameList() {
   if (NAME_LIST) return NAME_LIST;
   const seen = new Set();
@@ -208,9 +264,18 @@ function buildNameList() {
       if (seen.has(e.h)) continue;
       seen.add(e.h);
       const name = nameFromHref(e.h);
+      const base = splitNameTags(name).base;
       const brandLabel = (e.b || "").replace(/-/g, " ");
       const label = `${name} (${brandLabel} ${e.s || ""})`.replace(/\s+/g, " ").trim();
-      list.push({ href: e.h, brand: e.b, serial: e.s, name, nameLower: name.toLowerCase(), label });
+      list.push({
+        href: e.h,
+        brand: e.b,
+        serial: e.s,
+        name,
+        nameLower: name.toLowerCase(),
+        baseLower: base.toLowerCase(),
+        label
+      });
     }
   }
   NAME_LIST = list;
@@ -219,36 +284,46 @@ function buildNameList() {
 
 /**
  * Ищет фигурки по названию персонажа (по-английски, транслитом или по паре
- * популярных русских названий). Возвращает совпадения
- * {href, brand, serial, name, label} (без ограничения по числу — группировкой
- * и ограничением занимается groupFiguresByName).
+ * популярных русских названий). Сначала ищет только по основному имени
+ * (без пометок в скобках) — чтобы "Wolverine" не находил, например,
+ * "Tva Agent (Deadpool & Wolverine)", у которого Wolverine — это только
+ * пометка серии, а не сам персонаж. Если по основному имени ничего не
+ * нашлось — ищет уже везде. Возвращает совпадения {href, brand, serial,
+ * name, label} без ограничения по числу — группировкой и ограничением
+ * занимается groupFiguresByName.
  */
 function findFigureByName(rawQuery, limit) {
   if (!rawQuery) return [];
   const list = buildNameList();
   const lower = translateQueryHints(rawQuery.toLowerCase().trim());
   if (lower.length < 2) return [];
-  const matches = list.filter(item => item.nameLower.includes(lower));
-  return matches.slice(0, limit || 150);
+
+  let matches = list.filter(item => item.baseLower.includes(lower));
+  if (matches.length === 0) {
+    matches = list.filter(item => item.nameLower.includes(lower));
+  }
+  return matches.slice(0, limit || 300);
 }
 
 /**
- * Группирует результаты поиска по названию образа/варианта персонажа —
- * например у "Wolverine" бывают отдельные образы "Ninja Strike Wolverine",
- * "Symbiote Wolverine", а внутри каждого образа — несколько версий от
- * разных брендов-производителей (артикулы). Возвращает массив вида
- * {name, items: [...]}, отсортированный по названию, максимум maxGroups штук.
+ * Группирует результаты поиска по образу/варианту персонажа — например у
+ * "Wolverine" бывают отдельные образы "Ninja Strike Wolverine", "Venom
+ * Wolverine" (объединяет "Symbiote Wolverine" / "Wolverine Venom" и т.п.),
+ * а внутри каждого образа — несколько версий от разных производителей
+ * (артикулы). Возвращает массив {name, items: [...]}, отсортированный по
+ * названию, максимум maxGroups штук.
  */
 function groupFiguresByName(matches, maxGroups) {
-  const groups = new Map(); // name -> items[]
+  const groups = new Map(); // canonicalName -> items[]
   for (const item of matches) {
-    if (!groups.has(item.name)) groups.set(item.name, []);
-    groups.get(item.name).push(item);
+    const canonical = canonicalizeName(item.name);
+    if (!groups.has(canonical)) groups.set(canonical, []);
+    groups.get(canonical).push(item);
   }
   const result = Array.from(groups.entries())
     .map(([name, items]) => ({ name, items }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  return result.slice(0, maxGroups || 20);
+  return result.slice(0, maxGroups || 300);
 }
 
 function decodeHtmlEntities(str) {

@@ -39,6 +39,7 @@ const lastGroups = new Map();
 const lastResults = new Map();
 
 const FIND_BUTTON_TEXT = "🔍 Найти фигурку";
+const GROUP_PAGE_SIZE = 15;
 const mainKeyboard = {
   reply_markup: {
     keyboard: [[FIND_BUTTON_TEXT]],
@@ -137,6 +138,22 @@ bot.on("callback_query", async query => {
   const chatId = query.message.chat.id;
   const data = query.data || "";
 
+  // Кнопка «Ещё образы» — следующая страница списка образов персонажа.
+  if (data.startsWith("fignext:")) {
+    bot.answerCallbackQuery(query.id);
+    const page = parseInt(data.slice("fignext:".length), 10) || 0;
+    const groups = lastGroups.get(chatId);
+    if (!groups) {
+      bot.sendMessage(chatId, "Этот список уже устарел — начните поиск заново кнопкой «" + FIND_BUTTON_TEXT + "».");
+      return;
+    }
+    const keyboard = buildGroupKeyboard(groups, page);
+    const from = page * GROUP_PAGE_SIZE + 1;
+    const to = Math.min((page + 1) * GROUP_PAGE_SIZE, groups.length);
+    bot.sendMessage(chatId, `Образы ${from}–${to} из ${groups.length}:`, { reply_markup: keyboard });
+    return;
+  }
+
   // Выбор образа/варианта персонажа (первый уровень, например
   // «Ninja Strike Wolverine») — доступно любому пользователю.
   if (data.startsWith("figgroup:")) {
@@ -148,6 +165,22 @@ bot.on("callback_query", async query => {
       return;
     }
     await presentItems(chatId, groups[idx].items);
+    return;
+  }
+
+  // Кнопка «Ещё варианты» — следующая страница списка артикулов.
+  if (data.startsWith("figpicknext:")) {
+    bot.answerCallbackQuery(query.id);
+    const page = parseInt(data.slice("figpicknext:".length), 10) || 0;
+    const items = lastResults.get(chatId);
+    if (!items) {
+      bot.sendMessage(chatId, "Этот список уже устарел — начните поиск заново кнопкой «" + FIND_BUTTON_TEXT + "».");
+      return;
+    }
+    const keyboard = buildItemKeyboard(items, page);
+    const from = page * GROUP_PAGE_SIZE + 1;
+    const to = Math.min((page + 1) * GROUP_PAGE_SIZE, items.length);
+    bot.sendMessage(chatId, `Варианты ${from}–${to} из ${items.length}:`, { reply_markup: keyboard });
     return;
   }
 
@@ -261,24 +294,44 @@ async function handleFindQuery(msg) {
   }
 
   lastGroups.set(chatId, groups);
-  const keyboard = {
-    inline_keyboard: groups.map((g, i) => [{ text: `${g.name} (${g.items.length})`, callback_data: "figgroup:" + i }])
-  };
+  const keyboard = buildGroupKeyboard(groups, 0);
   bot.sendMessage(chatId, `Нашлось несколько образов (${groups.length}) — выберите нужный:`, { reply_markup: keyboard });
 }
 
+// Строит клавиатуру для одной "страницы" списка образов персонажа
+// (не более GROUP_PAGE_SIZE кнопок за раз) с кнопкой «Ещё образы», если
+// дальше есть ещё варианты.
+function buildGroupKeyboard(groups, page) {
+  const start = page * GROUP_PAGE_SIZE;
+  const pageGroups = groups.slice(start, start + GROUP_PAGE_SIZE);
+  const rows = pageGroups.map((g, i) => [{ text: `${g.name} (${g.items.length})`, callback_data: "figgroup:" + (start + i) }]);
+  if (start + GROUP_PAGE_SIZE < groups.length) {
+    rows.push([{ text: "➡️ Ещё образы", callback_data: "fignext:" + (page + 1) }]);
+  }
+  return { inline_keyboard: rows };
+}
+
 // Показывает конкретные фигурки: если она одна — сразу присылает фото,
-// если несколько (разные производители одного образа) — список на выбор.
+// если несколько (разные производители одного образа) — список на выбор
+// (тоже постранично, если вариантов много).
 async function presentItems(chatId, items) {
   if (items.length === 1) {
     await sendFigures(chatId, items);
     return;
   }
   lastResults.set(chatId, items);
-  const keyboard = {
-    inline_keyboard: items.map((item, i) => [{ text: item.label || item.name, callback_data: "figpick:" + i }])
-  };
+  const keyboard = buildItemKeyboard(items, 0);
   bot.sendMessage(chatId, `Нашлось ${items.length} вариантов — выберите нужный:`, { reply_markup: keyboard });
+}
+
+function buildItemKeyboard(items, page) {
+  const start = page * GROUP_PAGE_SIZE;
+  const pageItems = items.slice(start, start + GROUP_PAGE_SIZE);
+  const rows = pageItems.map((item, i) => [{ text: item.label || item.name, callback_data: "figpick:" + (start + i) }]);
+  if (start + GROUP_PAGE_SIZE < items.length) {
+    rows.push([{ text: "➡️ Ещё варианты", callback_data: "figpicknext:" + (page + 1) }]);
+  }
+  return { inline_keyboard: rows };
 }
 
 // Забирает описание и фото фигурки(ок) с herobloks.com и отправляет в чат.
