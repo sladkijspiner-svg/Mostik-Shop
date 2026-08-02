@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<title>Найти фигурку</title>
+<title>Найти фигурку — Mostik Shop</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <style>
@@ -43,13 +43,27 @@
     padding: 4px 0; cursor: pointer;
   }
   .group-list, .item-grid { display: flex; flex-direction: column; gap: 8px; }
+
+  /* --- строка образа (список группировок) --- */
   .group-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 12px 14px; border-radius: 12px;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px 8px 8px; border-radius: 12px;
     background: var(--card-bg); border: 1px solid var(--card-border);
     cursor: pointer;
   }
-  .group-row .count { color: var(--hint); font-size: 13px; }
+  .group-thumbs { display: flex; align-items: center; flex-shrink: 0; width: 40px; height: 32px; position: relative; }
+  .group-thumbs .gth {
+    width: 32px; height: 32px; border-radius: 8px; overflow: hidden;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--card-border);
+    position: absolute; top: 0; display: flex; align-items: center; justify-content: center;
+  }
+  .group-thumbs .gth:nth-child(1) { left: 0; z-index: 2; }
+  .group-thumbs .gth:nth-child(2) { left: 14px; z-index: 1; }
+  .group-thumbs .gth img { width: 100%; height: 100%; object-fit: cover; }
+  .group-row .gname { flex: 1; font-size: 14px; }
+  .group-row .count { color: var(--hint); font-size: 13px; flex-shrink: 0; }
+
+  /* --- сетка конкретных артикулов --- */
   .item-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .item-card {
     border-radius: 12px; background: var(--card-bg); border: 1px solid var(--card-border);
@@ -61,8 +75,8 @@
     overflow: hidden;
   }
   .item-card .thumb img { width: 100%; height: 100%; object-fit: cover; }
-  .item-card .thumb .spinner {
-    width: 22px; height: 22px; border-radius: 50%;
+  .spinner {
+    width: 20px; height: 20px; border-radius: 50%;
     border: 3px solid rgba(255,255,255,0.15); border-top-color: var(--link);
     animation: spin 0.8s linear infinite;
   }
@@ -71,7 +85,22 @@
   .item-card .label b { display: block; font-size: 13px; }
   .item-card .label span { color: var(--hint); font-size: 12px; }
   .empty { color: var(--hint); padding: 30px 0; text-align: center; }
-  .loading { color: var(--hint); padding: 30px 0; text-align: center; }
+  .loading { color: var(--hint); padding: 30px 0; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+  /* --- карточка с полной информацией о фигурке --- */
+  .detail-gallery { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .detail-gallery img {
+    width: 100%; border-radius: 14px; border: 1px solid var(--card-border);
+    background: rgba(255,255,255,0.04);
+  }
+  .detail-info {
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    border-radius: 14px; padding: 14px 16px;
+  }
+  .detail-info h2 { margin: 0 0 8px; font-size: 17px; }
+  .detail-info .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; border-top: 1px solid var(--card-border); }
+  .detail-info .row:first-of-type { border-top: none; }
+  .detail-info .row .k { color: var(--hint); }
 </style>
 </head>
 <body>
@@ -93,28 +122,33 @@
   if (tg) { tg.ready(); tg.expand(); }
 
   const qInput = document.getElementById("q");
-  const hintEl = document.getElementById("hint");
   const contentEl = document.getElementById("content");
   const crumbsEl = document.getElementById("crumbs");
   const backBtn = document.getElementById("backBtn");
-
-  let currentGroups = [];
-  let lastQuery = "";
 
   function debounce(fn, ms) {
     let t;
     return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
 
+  function showBack(fn) {
+    if (fn) {
+      crumbsEl.style.display = "flex";
+      backBtn.onclick = fn;
+    } else {
+      crumbsEl.style.display = "none";
+      backBtn.onclick = null;
+    }
+  }
+
   async function doSearch(q) {
-    lastQuery = q;
     if (!q || q.trim().length < 2) {
       contentEl.innerHTML = "";
-      crumbsEl.style.display = "none";
+      showBack(null);
       return;
     }
-    contentEl.innerHTML = '<div class="loading">Ищу…</div>';
-    crumbsEl.style.display = "none";
+    contentEl.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу…</div>';
+    showBack(null);
 
     let data;
     try {
@@ -125,50 +159,113 @@
       return;
     }
 
-    currentGroups = data.groups || [];
+    const backToSearch = () => doSearch(q);
 
-    // Прямое совпадение по артикулу — сразу картинку и переход к отправке.
+    // Прямое совпадение по артикулу.
     if (data.codeMatches && data.codeMatches.length > 0) {
-      renderItemGrid(data.codeMatches.map(m => ({ href: m.href, brand: m.brand, serial: m.serial, label: (m.brand || "") + " " + (m.serial || "") })));
+      const items = data.codeMatches.map(m => ({ href: m.href, brand: m.brand, serial: m.serial, label: (m.brand || "") + " " + (m.serial || "") }));
+      if (items.length === 1) {
+        showDetail(items[0], null);
+      } else {
+        renderItemGrid(items, null);
+      }
       return;
     }
 
-    if (currentGroups.length === 0) {
+    const groups = data.groups || [];
+    if (groups.length === 0) {
       contentEl.innerHTML = '<div class="empty">Ничего не нашлось. Попробуйте другой запрос.</div>';
       return;
     }
 
-    if (currentGroups.length === 1) {
-      renderItemGrid(currentGroups[0].items);
+    if (groups.length === 1) {
+      if (groups[0].items.length === 1) {
+        showDetail(groups[0].items[0], null);
+      } else {
+        renderItemGrid(groups[0].items, null);
+      }
       return;
     }
 
-    renderGroupList(currentGroups);
+    renderGroupList(groups);
   }
 
   function renderGroupList(groups) {
-    crumbsEl.style.display = "none";
+    showBack(null);
     const wrap = document.createElement("div");
     wrap.className = "group-list";
     groups.forEach(g => {
       const row = document.createElement("div");
       row.className = "group-row";
-      row.innerHTML = `<span>${escapeHtml(g.name)}</span><span class="count">${g.items.length}</span>`;
+      const thumbCount = g.items.length > 1 ? 2 : 1;
+      let thumbsHtml = "";
+      for (let i = 0; i < thumbCount; i++) {
+        thumbsHtml += `<div class="gth" data-i="${i}"><div class="spinner" style="width:14px;height:14px;border-width:2px"></div></div>`;
+      }
+      row.innerHTML = `
+        <div class="group-thumbs">${thumbsHtml}</div>
+        <span class="gname">${escapeHtml(g.name)}</span>
+        <span class="count">${g.items.length}</span>
+      `;
       row.addEventListener("click", () => {
-        crumbsEl.style.display = "flex";
-        renderItemGrid(g.items, groups);
+        if (g.items.length === 1) {
+          showDetail(g.items[0], () => renderGroupList(groups));
+        } else {
+          renderItemGrid(g.items, groups);
+        }
       });
       wrap.appendChild(row);
     });
     contentEl.innerHTML = "";
     contentEl.appendChild(wrap);
+
+    loadGroupThumbnails(groups, wrap);
+  }
+
+  async function loadGroupThumbnails(groups, wrap) {
+    // По 1-2 представительных фото на каждый образ (не больше 30 запросов за раз).
+    const jobs = []; // { href, rowIndex, slot }
+    groups.forEach((g, gi) => {
+      const n = g.items.length > 1 ? 2 : 1;
+      for (let i = 0; i < n; i++) {
+        if (g.items[i]) jobs.push({ href: g.items[i].href, rowIndex: gi, slot: i });
+      }
+    });
+    const limited = jobs.slice(0, 30);
+    const rows = wrap.querySelectorAll(".group-row");
+
+    // Слоты сверх лимита в 30 запросов — просто убираем спиннер, чтобы не крутился без толку.
+    jobs.slice(30).forEach(job => {
+      const row = rows[job.rowIndex];
+      const slotEl = row && row.querySelectorAll(".gth")[job.slot];
+      if (slotEl) slotEl.innerHTML = "";
+    });
+
+    if (limited.length === 0) return;
+    try {
+      const res = await fetch("/api/herobloks/thumbnails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hrefs: limited.map(j => j.href) })
+      });
+      const data = await res.json();
+      const byHref = {};
+      (data.items || []).forEach(x => { byHref[x.href] = x; });
+      limited.forEach(job => {
+        const row = rows[job.rowIndex];
+        if (!row) return;
+        const slotEl = row.querySelectorAll(".gth")[job.slot];
+        if (!slotEl) return;
+        const info = byHref[job.href];
+        slotEl.innerHTML = (info && info.imageUrl) ? `<img src="${info.imageUrl}" loading="lazy">` : "";
+      });
+    } catch (e) {
+      wrap.querySelectorAll(".gth").forEach(el => { el.innerHTML = ""; });
+    }
   }
 
   function renderItemGrid(items, parentGroups) {
-    crumbsEl.style.display = parentGroups ? "flex" : "none";
-    backBtn.onclick = () => {
-      if (parentGroups) renderGroupList(parentGroups);
-    };
+    showBack(parentGroups ? () => renderGroupList(parentGroups) : null);
 
     const grid = document.createElement("div");
     grid.className = "item-grid";
@@ -179,7 +276,7 @@
         <div class="thumb"><div class="spinner"></div></div>
         <div class="label"><b>${escapeHtml(item.brand || "")}</b><span>${escapeHtml(item.serial || "")}</span></div>
       `;
-      card.addEventListener("click", () => pickItem(item));
+      card.addEventListener("click", () => showDetail(item, () => renderItemGrid(items, parentGroups)));
       grid.appendChild(card);
     });
     contentEl.innerHTML = "";
@@ -214,14 +311,55 @@
     }
   }
 
-  function pickItem(item) {
-    if (tg && tg.sendData) {
-      tg.sendData(JSON.stringify({ href: item.href }));
-      tg.close();
-    } else {
-      // На случай открытия вне Telegram — просто откроем страницу herobloks.
-      window.open("https://www.herobloks.com" + item.href, "_blank");
+  // Показывает полную карточку фигурки прямо внутри приложения: все фото
+  // галереей и всю информацию (название, бренд, артикул, год, тема) — без
+  // перехода на herobloks.com.
+  async function showDetail(item, backFn) {
+    showBack(backFn);
+    contentEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загружаю…</div>';
+
+    let details;
+    try {
+      const res = await fetch("/api/herobloks/details?href=" + encodeURIComponent(item.href));
+      details = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<div class="empty">Не получилось загрузить информацию. Попробуйте ещё раз.</div>';
+      return;
     }
+
+    if (!details || details.error) {
+      contentEl.innerHTML = '<div class="empty">Не получилось загрузить информацию. Попробуйте ещё раз.</div>';
+      return;
+    }
+
+    const photos = (details.imageUrls && details.imageUrls.length) ? details.imageUrls : (details.imageUrl ? [details.imageUrl] : []);
+
+    const gallery = document.createElement("div");
+    gallery.className = "detail-gallery";
+    if (photos.length > 0) {
+      photos.forEach(url => {
+        const img = document.createElement("img");
+        img.src = url;
+        img.loading = "lazy";
+        gallery.appendChild(img);
+      });
+    }
+
+    const info = document.createElement("div");
+    info.className = "detail-info";
+    const rows = [];
+    rows.push(["Бренд", details.brand]);
+    rows.push(["Артикул", details.serial]);
+    rows.push(["Год", details.year]);
+    rows.push(["Тема", details.theme]);
+    info.innerHTML = `
+      <h2>${escapeHtml(details.name || details.basename || "Фигурка")}</h2>
+      ${rows.filter(r => r[1]).map(r => `<div class="row"><span class="k">${r[0]}</span><span>${escapeHtml(r[1])}</span></div>`).join("")}
+    `;
+
+    contentEl.innerHTML = "";
+    contentEl.appendChild(gallery);
+    contentEl.appendChild(info);
   }
 
   function escapeHtml(s) {
