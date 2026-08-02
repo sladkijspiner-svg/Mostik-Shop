@@ -39,10 +39,18 @@ const lastGroups = new Map();
 const lastResults = new Map();
 
 const FIND_BUTTON_TEXT = "🔍 Найти фигурку";
+const WEBAPP_BUTTON_TEXT = "🖼 Найти с картинками";
 const GROUP_PAGE_SIZE = 15;
+// Адрес мини-приложения (Telegram WebApp) — та же страница, что и сайт
+// магазина, только другой файл. Можно переопределить переменной окружения
+// WEBAPP_URL, если адрес когда-нибудь изменится.
+const WEBAPP_URL = process.env.WEBAPP_URL || "https://mostik-shop-production.up.railway.app/find-app.html";
 const mainKeyboard = {
   reply_markup: {
-    keyboard: [[FIND_BUTTON_TEXT]],
+    keyboard: [
+      [FIND_BUTTON_TEXT],
+      [{ text: WEBAPP_BUTTON_TEXT, web_app: { url: WEBAPP_URL } }]
+    ],
     resize_keyboard: true
   }
 };
@@ -217,6 +225,13 @@ bot.on("callback_query", async query => {
 });
 
 bot.on("message", async msg => {
+  // Сообщение из мини-приложения (человек выбрал фигурку на веб-странице) —
+  // приходит без обычного текста, зато с полем web_app_data.
+  if (msg.web_app_data) {
+    await handleWebAppData(msg);
+    return;
+  }
+
   // Пропускаем команды и сообщения без текста — их обрабатывают onText-хендлеры выше.
   if (!msg.text || msg.text.startsWith("/")) return;
   const chatId = msg.chat.id;
@@ -256,6 +271,22 @@ bot.on("message", async msg => {
   // не написал ли человек код фигурки (PG206, pg-206, pogo 206, пг206 и т.п.)
   await handleFigureCodeLookup(msg);
 });
+
+// Обрабатывает выбор фигурки, сделанный в мини-приложении (find-app.html).
+// Приложение присылает JSON вида {"href": "/figures/7400/pogo/pg-206/..."}
+// через Telegram.WebApp.sendData() — забираем фото и описание и отправляем
+// их обычным сообщением в чат, как если бы человек выбрал вариант в боте.
+async function handleWebAppData(msg) {
+  const chatId = msg.chat.id;
+  try {
+    const payload = JSON.parse(msg.web_app_data.data);
+    if (payload && payload.href) {
+      await sendFigures(chatId, [{ href: payload.href }]);
+    }
+  } catch (e) {
+    console.error("web_app_data parse error:", e.message);
+  }
+}
 
 // Ищет код фигурки в сообщении и, если находит совпадение в локальной базе
 // herobloks.com, присылает пользователю фото и описание этой фигурки.
