@@ -3,6 +3,7 @@ const TelegramBot = require("node-telegram-bot-api");
 const store = require("./store");
 const flow = require("./telegramFlow");
 const herobloks = require("./herobloks");
+const wishlist = require("./wishlist");
 
 const TOKEN = process.env.BOT_TOKEN;
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
@@ -41,6 +42,11 @@ const lastResults = new Map();
 // chatId -> последний список подсказок "Возможно, вы имели в виду?" —
 // когда по запросу ничего не нашлось, но похоже на опечатку.
 const lastSuggestions = new Map();
+
+// chatId -> список фигурок, только что показанных этому чату (sendFigures) —
+// нужно, чтобы кнопка «В вишлист» под карточкой знала, какую именно
+// фигурку добавлять.
+const lastSentFigures = new Map();
 
 const FIND_BUTTON_TEXT = "🔍 Найти фигурку";
 const WEBAPP_BUTTON_TEXT = "🖼 Найти с картинками";
@@ -81,7 +87,7 @@ bot.onText(/^\/start/, msg => {
   if (!isAdmin(msg.from.id)) {
     bot.sendMessage(
       chatId,
-      `Привет! Это бот магазина Mostik Shop.\nВаш Telegram id: ${msg.from.id}\n\nНажмите «${FIND_BUTTON_TEXT}» или просто напишите артикул фигурки (например PG-206) — пришлю фото и описание.`,
+      `Привет! Это бот магазина Mostik Shop.\nВаш Telegram id: ${msg.from.id}\n\nНажмите «${FIND_BUTTON_TEXT}» или просто напишите артикул фигурки (например PG-206) — пришлю фото и описание.\n\nПонравившиеся фигурки добавляйте в вишлист кнопкой «❤️ В вишлист» под карточкой, а затем командой /wishlist отправьте список мне — я поищу их в продаже.`,
       mainKeyboard
     );
     bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, webAppInlineKeyboard);
@@ -89,6 +95,27 @@ bot.onText(/^\/start/, msg => {
   }
   bot.sendMessage(chatId, "Привет! Вы администратор магазина.\n\n" + flow.helpText(), mainKeyboard);
   bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, webAppInlineKeyboard);
+});
+
+bot.onText(/^\/wishlist/, msg => {
+  const chatId = msg.chat.id;
+  const list = wishlist.getList(msg.from.id);
+  if (list.length === 0) {
+    bot.sendMessage(chatId, "Вишлист пуст. Найдите фигурку и нажмите «❤️ В вишлист» под карточкой.");
+    return;
+  }
+  const lines = list.map((item, i) => {
+    const brandSerial = `${item.brand || ""} ${item.serial || ""}`.trim();
+    return `${i + 1}. ${item.name || "Фигурка"}` + (brandSerial ? ` — ${brandSerial}` : "");
+  });
+  bot.sendMessage(chatId, `Ваш вишлист (${list.length}):\n\n` + lines.join("\n"), {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "📩 Отправить админу", callback_data: "wishsend" }],
+        [{ text: "🗑 Очистить вишлист", callback_data: "wishclear" }]
+      ]
+    }
+  });
 });
 
 bot.onText(/^\/help/, msg => {
@@ -231,6 +258,50 @@ bot.on("callback_query", async query => {
       return;
     }
     await runFigureSearch(chatId, suggestions[idx].query);
+    return;
+  }
+
+  // Кнопка «В вишлист» под карточкой фигурки — доступно любому пользователю.
+  if (data.startsWith("wishadd:")) {
+    const idx = parseInt(data.slice("wishadd:".length), 10);
+    const sent = lastSentFigures.get(chatId);
+    if (!sent || !sent[idx]) {
+      bot.answerCallbackQuery(query.id);
+      bot.sendMessage(chatId, "Эта карточка уже устарела — найдите фигурку заново.");
+      return;
+    }
+    wishlist.addItem(query.from.id, sent[idx]);
+    bot.answerCallbackQuery(query.id, { text: "Добавлено в вишлист ❤️" });
+    bot.sendMessage(chatId, `«${sent[idx].name}» добавлена в вишлист ❤️\nПосмотреть весь список — /wishlist`);
+    return;
+  }
+
+  // Отправить свой вишлист администратору — доступно любому пользователю.
+  if (data === "wishsend") {
+    bot.answerCallbackQuery(query.id);
+    const list = wishlist.getList(query.from.id);
+    if (list.length === 0) {
+      bot.sendMessage(chatId, "Вишлист пуст.");
+      return;
+    }
+    if (ADMIN_IDS.length === 0) {
+      bot.sendMessage(chatId, "Не настроен администратор магазина — некому отправить.");
+      return;
+    }
+    const who = query.from.username ? "@" + query.from.username : (query.from.first_name || "Покупатель");
+    const text = wishlist.formatWishlistText(who, query.from.id, list);
+    for (const adminId of ADMIN_IDS) {
+      bot.sendMessage(adminId, text).catch(e => console.error("wishlist send to admin failed:", e.message));
+    }
+    bot.sendMessage(chatId, "Вишлист отправлен администратору ✅");
+    return;
+  }
+
+  // Очистить свой вишлист — доступно любому пользователю.
+  if (data === "wishclear") {
+    bot.answerCallbackQuery(query.id);
+    wishlist.clearList(query.from.id);
+    bot.sendMessage(chatId, "Вишлист очищен.");
     return;
   }
 
@@ -401,14 +472,21 @@ function buildItemKeyboard(items, page) {
 }
 
 // Забирает описание и фото фигурки(ок) с herobloks.com и отправляет в чат.
-// Если у фигурки несколько фото — присылает их все альбомом.
+// Если у фигурки несколько фото — присылает их все альбомом. Под каждой
+// карточкой отдельным сообщением идёт кнопка «В вишлист» — Telegram не
+// позволяет прикрепить инлайн-кнопку прямо к альбому фото, поэтому она
+// всегда в отдельном сообщении сразу после фото.
 async function sendFigures(chatId, matches) {
+  const sentList = [];
+  lastSentFigures.set(chatId, sentList);
+
   for (const match of matches) {
     const href = match.href || match.h;
     try {
       const details = await herobloks.fetchFigureDetails(href);
+      const name = details.name || details.basename || "Фигурка";
       const lines = [];
-      lines.push(`🧱 ${details.name || details.basename || "Фигурка"}`);
+      lines.push(`🧱 ${name}`);
       if (details.brand || details.serial) {
         lines.push(`${details.brand || ""} ${details.serial || ""}`.trim());
       }
@@ -431,6 +509,12 @@ async function sendFigures(chatId, matches) {
       } else {
         await bot.sendMessage(chatId, caption);
       }
+
+      const idx = sentList.length;
+      sentList.push({ href, name, brand: details.brand, serial: details.serial });
+      await bot.sendMessage(chatId, "Хотите её купить?", {
+        reply_markup: { inline_keyboard: [[{ text: "❤️ В вишлист", callback_data: "wishadd:" + idx }]] }
+      });
     } catch (e) {
       console.error("herobloks lookup error:", e.message);
     }

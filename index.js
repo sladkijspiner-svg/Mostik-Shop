@@ -4,6 +4,16 @@ const express = require("express");
 const cors = require("cors");
 const store = require("./store");
 const herobloks = require("./herobloks");
+const wishlist = require("./wishlist");
+// Бот стартует прямо при этом require (тот же процесс, чтобы не поднимать
+// второй сервис) — переменная нужна, чтобы отсюда тоже можно было слать
+// сообщения администратору (например вишлист из мини-приложения).
+const bot = require("./bot");
+
+const ADMIN_IDS = (process.env.ADMIN_IDS || "")
+  .split(",")
+  .map(s => s.trim())
+  .filter(Boolean);
 
 const app = express();
 app.use(cors());
@@ -107,10 +117,63 @@ app.get("/api/herobloks/details", async (req, res) => {
   }
 });
 
+// ---- API вишлиста (для мини-приложения) ----
+// Тот же вишлист, что и в самом боте (команда /wishlist) — общее хранилище
+// server/data/wishlists.json, ключ — Telegram id покупателя.
+
+app.get("/api/wishlist", (req, res) => {
+  const userId = (req.query.userId || "").toString();
+  if (!userId) return res.status(400).json({ error: "no_user" });
+  res.json({ items: wishlist.getList(userId) });
+});
+
+app.post("/api/wishlist/add", (req, res) => {
+  const userId = (req.body.userId || "").toString();
+  const href = (req.body.href || "").toString();
+  if (!userId || !href) return res.status(400).json({ error: "bad_request" });
+  const items = wishlist.addItem(userId, {
+    href,
+    name: req.body.name,
+    brand: req.body.brand,
+    serial: req.body.serial
+  });
+  res.json({ items });
+});
+
+app.post("/api/wishlist/remove", (req, res) => {
+  const userId = (req.body.userId || "").toString();
+  const href = (req.body.href || "").toString();
+  if (!userId || !href) return res.status(400).json({ error: "bad_request" });
+  const items = wishlist.removeItem(userId, href);
+  res.json({ items });
+});
+
+app.post("/api/wishlist/clear", (req, res) => {
+  const userId = (req.body.userId || "").toString();
+  if (!userId) return res.status(400).json({ error: "bad_request" });
+  wishlist.clearList(userId);
+  res.json({ items: [] });
+});
+
+// Отправляет вишлист покупателя администратору магазина в чат бота — чтобы
+// он мог поискать эти фигурки в продаже.
+app.post("/api/wishlist/send", async (req, res) => {
+  const userId = (req.body.userId || "").toString();
+  if (!userId) return res.status(400).json({ error: "bad_request" });
+
+  const list = wishlist.getList(userId);
+  if (list.length === 0) return res.json({ ok: false, reason: "empty" });
+  if (!bot || ADMIN_IDS.length === 0) return res.json({ ok: false, reason: "no_admin" });
+
+  const who = req.body.username ? "@" + req.body.username : (req.body.firstName || "Покупатель");
+  const text = wishlist.formatWishlistText(who, userId, list);
+  for (const adminId of ADMIN_IDS) {
+    bot.sendMessage(adminId, text).catch(e => console.error("wishlist send error:", e.message));
+  }
+  res.json({ ok: true });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("API запущено на порту " + PORT);
 });
-
-// Бот запускается в этом же процессе, чтобы не поднимать второй сервис.
-require("./bot");
