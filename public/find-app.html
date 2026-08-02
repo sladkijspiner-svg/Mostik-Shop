@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Найти фигурку</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #15161d);
+    --text: var(--tg-theme-text-color, #f2f2f5);
+    --hint: var(--tg-theme-hint-color, #8a8d99);
+    --link: var(--tg-theme-link-color, #7aa2ff);
+    --button: var(--tg-theme-button-color, #a41f1f);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --card-bg: rgba(255,255,255,0.06);
+    --card-border: rgba(255,255,255,0.10);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 12px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 18px; margin: 4px 0 12px; }
+  .search-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  #q {
+    flex: 1;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--card-border);
+    background: var(--card-bg);
+    color: var(--text);
+    font-size: 16px;
+  }
+  #q::placeholder { color: var(--hint); }
+  .hint { color: var(--hint); font-size: 13px; margin-bottom: 14px; }
+  .crumbs { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .crumbs button {
+    background: none; border: none; color: var(--link); font-size: 14px;
+    padding: 4px 0; cursor: pointer;
+  }
+  .group-list, .item-grid { display: flex; flex-direction: column; gap: 8px; }
+  .group-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 14px; border-radius: 12px;
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    cursor: pointer;
+  }
+  .group-row .count { color: var(--hint); font-size: 13px; }
+  .item-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .item-card {
+    border-radius: 12px; background: var(--card-bg); border: 1px solid var(--card-border);
+    overflow: hidden; cursor: pointer; display: flex; flex-direction: column;
+  }
+  .item-card .thumb {
+    width: 100%; aspect-ratio: 1/1; background: rgba(255,255,255,0.04);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .item-card .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .item-card .thumb .spinner {
+    width: 22px; height: 22px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.15); border-top-color: var(--link);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .item-card .label { padding: 8px 10px; font-size: 13px; line-height: 1.3; }
+  .item-card .label b { display: block; font-size: 13px; }
+  .item-card .label span { color: var(--hint); font-size: 12px; }
+  .empty { color: var(--hint); padding: 30px 0; text-align: center; }
+  .loading { color: var(--hint); padding: 30px 0; text-align: center; }
+</style>
+</head>
+<body>
+
+<h1>🔍 Найти фигурку</h1>
+<div class="search-row">
+  <input id="q" type="text" placeholder="Артикул (PG-206) или имя (Wolverine)" autocomplete="off">
+</div>
+<div class="hint" id="hint">Начните вводить артикул или имя персонажа — и по-русски тоже можно.</div>
+
+<div id="crumbs" class="crumbs" style="display:none">
+  <button id="backBtn">← Назад</button>
+</div>
+
+<div id="content"></div>
+
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const qInput = document.getElementById("q");
+  const hintEl = document.getElementById("hint");
+  const contentEl = document.getElementById("content");
+  const crumbsEl = document.getElementById("crumbs");
+  const backBtn = document.getElementById("backBtn");
+
+  let currentGroups = [];
+  let lastQuery = "";
+
+  function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  async function doSearch(q) {
+    lastQuery = q;
+    if (!q || q.trim().length < 2) {
+      contentEl.innerHTML = "";
+      crumbsEl.style.display = "none";
+      return;
+    }
+    contentEl.innerHTML = '<div class="loading">Ищу…</div>';
+    crumbsEl.style.display = "none";
+
+    let data;
+    try {
+      const res = await fetch("/api/herobloks/search?q=" + encodeURIComponent(q));
+      data = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<div class="empty">Не получилось выполнить поиск. Попробуйте ещё раз.</div>';
+      return;
+    }
+
+    currentGroups = data.groups || [];
+
+    // Прямое совпадение по артикулу — сразу картинку и переход к отправке.
+    if (data.codeMatches && data.codeMatches.length > 0) {
+      renderItemGrid(data.codeMatches.map(m => ({ href: m.href, brand: m.brand, serial: m.serial, label: (m.brand || "") + " " + (m.serial || "") })));
+      return;
+    }
+
+    if (currentGroups.length === 0) {
+      contentEl.innerHTML = '<div class="empty">Ничего не нашлось. Попробуйте другой запрос.</div>';
+      return;
+    }
+
+    if (currentGroups.length === 1) {
+      renderItemGrid(currentGroups[0].items);
+      return;
+    }
+
+    renderGroupList(currentGroups);
+  }
+
+  function renderGroupList(groups) {
+    crumbsEl.style.display = "none";
+    const wrap = document.createElement("div");
+    wrap.className = "group-list";
+    groups.forEach(g => {
+      const row = document.createElement("div");
+      row.className = "group-row";
+      row.innerHTML = `<span>${escapeHtml(g.name)}</span><span class="count">${g.items.length}</span>`;
+      row.addEventListener("click", () => {
+        crumbsEl.style.display = "flex";
+        renderItemGrid(g.items, groups);
+      });
+      wrap.appendChild(row);
+    });
+    contentEl.innerHTML = "";
+    contentEl.appendChild(wrap);
+  }
+
+  function renderItemGrid(items, parentGroups) {
+    crumbsEl.style.display = parentGroups ? "flex" : "none";
+    backBtn.onclick = () => {
+      if (parentGroups) renderGroupList(parentGroups);
+    };
+
+    const grid = document.createElement("div");
+    grid.className = "item-grid";
+    items.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "item-card";
+      card.innerHTML = `
+        <div class="thumb"><div class="spinner"></div></div>
+        <div class="label"><b>${escapeHtml(item.brand || "")}</b><span>${escapeHtml(item.serial || "")}</span></div>
+      `;
+      card.addEventListener("click", () => pickItem(item));
+      grid.appendChild(card);
+    });
+    contentEl.innerHTML = "";
+    contentEl.appendChild(grid);
+
+    loadThumbnails(items, grid);
+  }
+
+  async function loadThumbnails(items, grid) {
+    const hrefs = items.map(i => i.href);
+    try {
+      const res = await fetch("/api/herobloks/thumbnails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hrefs })
+      });
+      const data = await res.json();
+      const byHref = {};
+      (data.items || []).forEach(x => { byHref[x.href] = x; });
+      const cards = grid.querySelectorAll(".item-card");
+      cards.forEach((card, i) => {
+        const info = byHref[hrefs[i]];
+        const thumb = card.querySelector(".thumb");
+        if (info && info.imageUrl) {
+          thumb.innerHTML = `<img src="${info.imageUrl}" loading="lazy">`;
+        } else {
+          thumb.innerHTML = `<span style="font-size:11px;color:var(--hint)">нет фото</span>`;
+        }
+      });
+    } catch (e) {
+      // тихо — карточки просто останутся без фото
+    }
+  }
+
+  function pickItem(item) {
+    if (tg && tg.sendData) {
+      tg.sendData(JSON.stringify({ href: item.href }));
+      tg.close();
+    } else {
+      // На случай открытия вне Telegram — просто откроем страницу herobloks.
+      window.open("https://www.herobloks.com" + item.href, "_blank");
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  qInput.addEventListener("input", debounce(e => doSearch(e.target.value), 400));
+</script>
+</body>
+</html>
