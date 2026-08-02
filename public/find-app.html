@@ -23,7 +23,12 @@
     color: var(--text);
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
-  h1 { font-size: 18px; margin: 4px 0 12px; }
+  h1 { font-size: 18px; margin: 0; }
+  .header-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 12px; gap: 8px; }
+  .wish-badge {
+    border: 1px solid var(--card-border); background: var(--card-bg); color: var(--text);
+    border-radius: 999px; padding: 6px 12px; font-size: 14px; cursor: pointer; flex-shrink: 0;
+  }
   .search-row { display: flex; gap: 8px; margin-bottom: 14px; }
   #q {
     flex: 1;
@@ -118,11 +123,41 @@
   .mp-btn.ozon { background: #005bff; }
   .mp-btn.wb { background: #cb11ab; }
   .mp-btn.ali { background: #ff4747; }
+
+  /* --- вишлист --- */
+  .wish-toggle {
+    display: block; width: 100%; margin-top: 12px; padding: 12px;
+    border-radius: 12px; border: 1px solid var(--card-border);
+    background: var(--card-bg); color: var(--text); font-size: 14px; font-weight: 600;
+    cursor: pointer;
+  }
+  .wish-toggle.active { background: var(--button); color: var(--button-text); border-color: var(--button); }
+  .wish-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 10px 12px 14px; border-radius: 12px;
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    cursor: pointer;
+  }
+  .wish-row .wname { flex: 1; font-size: 14px; }
+  .wish-row .wname span { display: block; color: var(--hint); font-size: 12px; margin-top: 2px; }
+  .wish-row .wremove {
+    border: none; background: none; color: var(--hint); font-size: 18px; line-height: 1;
+    padding: 4px 6px; cursor: pointer; flex-shrink: 0;
+  }
+  .wish-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .wish-actions button {
+    border: none; border-radius: 12px; padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .wish-send { background: var(--button); color: var(--button-text); }
+  .wish-clear { background: var(--card-bg); color: var(--hint); border: 1px solid var(--card-border) !important; }
 </style>
 </head>
 <body>
 
-<h1>🔍 Найти фигурку</h1>
+<div class="header-row">
+  <h1>🔍 Найти фигурку</h1>
+  <button id="wishBtn" class="wish-badge">🖤 <span id="wishCount">0</span></button>
+</div>
 <div class="search-row">
   <input id="q" type="text" placeholder="Артикул (PG-206) или имя (Wolverine)" autocomplete="off">
 </div>
@@ -145,6 +180,8 @@
   const contentEl = document.getElementById("content");
   const crumbsEl = document.getElementById("crumbs");
   const backBtn = document.getElementById("backBtn");
+  const wishBtn = document.getElementById("wishBtn");
+  const wishCountEl = document.getElementById("wishCount");
 
   function debounce(fn, ms) {
     let t;
@@ -415,6 +452,12 @@
     contentEl.innerHTML = "";
     contentEl.appendChild(gallery);
     contentEl.appendChild(info);
+    contentEl.appendChild(buildWishToggle({
+      href: item.href,
+      name: details.name || details.basename || "Фигурка",
+      brand: details.brand,
+      serial: details.serial
+    }));
 
     if (details.marketplaceCode) {
       contentEl.appendChild(buildMarketplaceBlock(details.marketplaceCode));
@@ -450,6 +493,188 @@
     });
     return block;
   }
+
+  // ---- Вишлист ----
+  // Понравившиеся фигурки покупатель отмечает сердечком, а потом одной
+  // кнопкой отправляет весь список администратору (боту), чтобы тот
+  // поискал их в продаже. Список хранится на сервере по Telegram id.
+
+  let wishlistCache = [];
+  let wishlistIds = new Set();
+
+  function getTgUser() {
+    return (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) || null;
+  }
+
+  function notify(text) {
+    if (tg && tg.showAlert) tg.showAlert(text);
+    else alert(text);
+  }
+
+  function updateWishBadge() {
+    wishCountEl.textContent = wishlistCache.length;
+  }
+
+  async function loadWishlist() {
+    const user = getTgUser();
+    if (!user) return;
+    try {
+      const res = await fetch("/api/wishlist?userId=" + encodeURIComponent(user.id));
+      const data = await res.json();
+      wishlistCache = data.items || [];
+      wishlistIds = new Set(wishlistCache.map(i => i.href));
+      updateWishBadge();
+    } catch (e) {
+      // тихо — бейдж просто останется как был
+    }
+  }
+
+  async function addToWishlist(item) {
+    const user = getTgUser();
+    if (!user) { notify("Вишлист доступен только внутри Telegram."); return false; }
+    try {
+      const res = await fetch("/api/wishlist/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, href: item.href, name: item.name, brand: item.brand, serial: item.serial })
+      });
+      const data = await res.json();
+      wishlistCache = data.items || wishlistCache;
+      wishlistIds.add(item.href);
+      updateWishBadge();
+      return true;
+    } catch (e) {
+      notify("Не получилось добавить в вишлист. Попробуйте ещё раз.");
+      return false;
+    }
+  }
+
+  async function removeFromWishlist(href) {
+    const user = getTgUser();
+    if (!user) return false;
+    try {
+      const res = await fetch("/api/wishlist/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, href })
+      });
+      const data = await res.json();
+      wishlistCache = data.items || wishlistCache.filter(i => i.href !== href);
+      wishlistIds.delete(href);
+      updateWishBadge();
+      return true;
+    } catch (e) {
+      notify("Не получилось убрать из вишлиста. Попробуйте ещё раз.");
+      return false;
+    }
+  }
+
+  // Кнопка-сердечко под карточкой фигурки — переключает "в вишлисте / нет".
+  function buildWishToggle(item) {
+    const btn = document.createElement("button");
+    btn.className = "wish-toggle";
+    const paint = () => {
+      const inList = wishlistIds.has(item.href);
+      btn.classList.toggle("active", inList);
+      btn.textContent = inList ? "❤️ В вишлисте — нажмите, чтобы убрать" : "🤍 Добавить в вишлист";
+    };
+    paint();
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      if (wishlistIds.has(item.href)) {
+        await removeFromWishlist(item.href);
+      } else {
+        await addToWishlist(item);
+      }
+      btn.disabled = false;
+      paint();
+    });
+    return btn;
+  }
+
+  // Экран «Мой вишлист»: список отмеченных фигурок, у каждой можно перейти
+  // к карточке или убрать крестиком, плюс кнопки отправить/очистить.
+  function renderWishlistView() {
+    showBack(resetSearch);
+    qInput.value = "";
+
+    if (!getTgUser()) {
+      contentEl.innerHTML = '<div class="empty">Вишлист доступен только внутри Telegram.</div>';
+      return;
+    }
+
+    if (wishlistCache.length === 0) {
+      contentEl.innerHTML = '<div class="empty">Вишлист пуст. Найдите фигурку и нажмите «🤍 Добавить в вишлист».</div>';
+      return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "group-list";
+    wishlistCache.forEach(item => {
+      const row = document.createElement("div");
+      row.className = "wish-row";
+      const brandSerial = `${item.brand || ""} ${item.serial || ""}`.trim();
+      row.innerHTML = `
+        <div class="wname">${escapeHtml(item.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}</div>
+        <button class="wremove" title="Убрать">✕</button>
+      `;
+      row.querySelector(".wname").addEventListener("click", () => {
+        showDetail({ href: item.href, brand: item.brand, serial: item.serial }, renderWishlistView);
+      });
+      row.querySelector(".wremove").addEventListener("click", async e => {
+        e.stopPropagation();
+        await removeFromWishlist(item.href);
+        renderWishlistView();
+      });
+      wrap.appendChild(row);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "wish-actions";
+    actions.innerHTML = `
+      <button class="wish-send">📩 Отправить админу</button>
+      <button class="wish-clear">🗑 Очистить вишлист</button>
+    `;
+    actions.querySelector(".wish-send").addEventListener("click", async () => {
+      const user = getTgUser();
+      try {
+        const res = await fetch("/api/wishlist/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id, username: user.username, firstName: user.first_name })
+        });
+        const data = await res.json();
+        if (data.ok) notify("Вишлист отправлен администратору ✅");
+        else if (data.reason === "no_admin") notify("Не настроен администратор магазина — некому отправить.");
+        else notify("Не получилось отправить. Попробуйте ещё раз.");
+      } catch (e) {
+        notify("Не получилось отправить. Попробуйте ещё раз.");
+      }
+    });
+    actions.querySelector(".wish-clear").addEventListener("click", async () => {
+      const user = getTgUser();
+      try {
+        await fetch("/api/wishlist/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id })
+        });
+        wishlistCache = [];
+        wishlistIds = new Set();
+        updateWishBadge();
+        renderWishlistView();
+      } catch (e) {
+        notify("Не получилось очистить вишлист. Попробуйте ещё раз.");
+      }
+    });
+
+    contentEl.innerHTML = "";
+    contentEl.appendChild(wrap);
+    contentEl.appendChild(actions);
+  }
+
+  wishBtn.addEventListener("click", renderWishlistView);
+  loadWishlist();
 
   function escapeHtml(s) {
     return String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
