@@ -68,7 +68,7 @@ bot.onText(/^\/start/, msg => {
   if (!isAdmin(msg.from.id)) {
     bot.sendMessage(
       chatId,
-      `Привет! Это бот магазина MINIFIG STORE.\nВаш Telegram id: ${msg.from.id}\n\nНажмите «${FIND_BUTTON_TEXT}» или просто напишите артикул фигурки (например PG-206) — пришлю фото и описание.`,
+      `Привет! Это бот магазина Mostik Shop.\nВаш Telegram id: ${msg.from.id}\n\nНажмите «${FIND_BUTTON_TEXT}» или просто напишите артикул фигурки (например PG-206) — пришлю фото и описание.`,
       mainKeyboard
     );
     return;
