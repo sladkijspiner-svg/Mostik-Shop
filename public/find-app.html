@@ -90,8 +90,9 @@
   /* --- карточка с полной информацией о фигурке --- */
   .detail-gallery { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
   .detail-gallery img {
-    width: 100%; border-radius: 14px; border: 1px solid var(--card-border);
-    background: rgba(255,255,255,0.04);
+    width: 100%; max-height: 46vh; object-fit: contain;
+    border-radius: 14px; border: 1px solid var(--card-border);
+    background: #fff;
   }
   .detail-info {
     background: var(--card-bg); border: 1px solid var(--card-border);
@@ -101,6 +102,18 @@
   .detail-info .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; border-top: 1px solid var(--card-border); }
   .detail-info .row:first-of-type { border-top: none; }
   .detail-info .row .k { color: var(--hint); }
+
+  /* --- «Проверить наличие на:» --- */
+  .marketplace-block { margin-top: 14px; }
+  .marketplace-block .mp-label { color: var(--hint); font-size: 13px; margin-bottom: 8px; }
+  .mp-buttons { display: flex; gap: 8px; }
+  .mp-btn {
+    flex: 1; border: none; border-radius: 12px; padding: 12px 8px;
+    font-size: 14px; font-weight: 600; color: #fff; cursor: pointer;
+  }
+  .mp-btn.ozon { background: #005bff; }
+  .mp-btn.wb { background: #cb11ab; }
+  .mp-btn.ali { background: #ff4747; }
 </style>
 </head>
 <body>
@@ -141,6 +154,16 @@
     }
   }
 
+  // Возврат «в начало» — используется там, где до карточки/списка не было
+  // предыдущего экрана (например прямое совпадение по артикулу): просто
+  // очищает поле поиска и результаты.
+  function resetSearch() {
+    qInput.value = "";
+    contentEl.innerHTML = "";
+    showBack(null);
+    qInput.focus();
+  }
+
   async function doSearch(q) {
     if (!q || q.trim().length < 2) {
       contentEl.innerHTML = "";
@@ -159,15 +182,13 @@
       return;
     }
 
-    const backToSearch = () => doSearch(q);
-
     // Прямое совпадение по артикулу.
     if (data.codeMatches && data.codeMatches.length > 0) {
       const items = data.codeMatches.map(m => ({ href: m.href, brand: m.brand, serial: m.serial, label: (m.brand || "") + " " + (m.serial || "") }));
       if (items.length === 1) {
-        showDetail(items[0], null);
+        showDetail(items[0], resetSearch);
       } else {
-        renderItemGrid(items, null);
+        renderItemGrid(items, resetSearch);
       }
       return;
     }
@@ -180,9 +201,9 @@
 
     if (groups.length === 1) {
       if (groups[0].items.length === 1) {
-        showDetail(groups[0].items[0], null);
+        showDetail(groups[0].items[0], resetSearch);
       } else {
-        renderItemGrid(groups[0].items, null);
+        renderItemGrid(groups[0].items, resetSearch);
       }
       return;
     }
@@ -211,7 +232,7 @@
         if (g.items.length === 1) {
           showDetail(g.items[0], () => renderGroupList(groups));
         } else {
-          renderItemGrid(g.items, groups);
+          renderItemGrid(g.items, () => renderGroupList(groups));
         }
       });
       wrap.appendChild(row);
@@ -264,8 +285,8 @@
     }
   }
 
-  function renderItemGrid(items, parentGroups) {
-    showBack(parentGroups ? () => renderGroupList(parentGroups) : null);
+  function renderItemGrid(items, backFn) {
+    showBack(backFn || null);
 
     const grid = document.createElement("div");
     grid.className = "item-grid";
@@ -276,7 +297,7 @@
         <div class="thumb"><div class="spinner"></div></div>
         <div class="label"><b>${escapeHtml(item.brand || "")}</b><span>${escapeHtml(item.serial || "")}</span></div>
       `;
-      card.addEventListener("click", () => showDetail(item, () => renderItemGrid(items, parentGroups)));
+      card.addEventListener("click", () => showDetail(item, () => renderItemGrid(items, backFn)));
       grid.appendChild(card);
     });
     contentEl.innerHTML = "";
@@ -360,6 +381,40 @@
     contentEl.innerHTML = "";
     contentEl.appendChild(gallery);
     contentEl.appendChild(info);
+
+    if (details.marketplaceCode) {
+      contentEl.appendChild(buildMarketplaceBlock(details.marketplaceCode));
+    }
+  }
+
+  // Блок «Проверить наличие на: Озон / ВБ / Алик» — открывает поиск по
+  // артикулу этой фигурки на соответствующем маркетплейсе.
+  function buildMarketplaceBlock(code) {
+    const q = encodeURIComponent(code);
+    const links = [
+      { cls: "ozon", label: "Озон", url: `https://www.ozon.ru/search/?text=${q}` },
+      { cls: "wb", label: "ВБ", url: `https://www.wildberries.ru/catalog/0/search.aspx?search=${q}` },
+      { cls: "ali", label: "Алик", url: `https://aliexpress.ru/wholesale?SearchText=${q}` }
+    ];
+    const block = document.createElement("div");
+    block.className = "marketplace-block";
+    block.innerHTML = `
+      <div class="mp-label">Проверить наличие на:</div>
+      <div class="mp-buttons">
+        ${links.map(l => `<button class="mp-btn ${l.cls}" data-url="${escapeHtml(l.url)}">${l.label}</button>`).join("")}
+      </div>
+    `;
+    block.querySelectorAll(".mp-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const url = btn.getAttribute("data-url");
+        if (tg && tg.openLink) {
+          tg.openLink(url);
+        } else {
+          window.open(url, "_blank");
+        }
+      });
+    });
+    return block;
   }
 
   function escapeHtml(s) {
