@@ -16,35 +16,48 @@
 // data/analytics.json. Пересобрать можно вручную командой бота /rebuildstats
 // (только для админа) — например, если через какое-то время захочется
 // свежие цифры.
+//
+// ВАЖНО про память: на маленьком тарифе Railway процесс один раз уже падал
+// по нехватке памяти прямо посреди такого обхода (см. историю в index.js —
+// автозапуск при старте сервера поэтому отключён). Чтобы одно случайное
+// падение не откатывало прогресс к нулю, промежуточный результат сохраняется
+// на диск (data/analytics_checkpoint.json) каждые CHECKPOINT_EVERY фигурок —
+// если процесс упадёт и /rebuildstats запустят заново, обход продолжится с
+// того места, где остановился, а не с начала. Плюс в памяти держим не весь
+// список (~6500 объектов), а только то, что реально нужно в конце — топ-15
+// популярных, топ-15 редких и счётчик по годам.
 
 const fs = require("fs");
 const path = require("path");
 const herobloks = require("./herobloks");
 
 const CACHE_FILE = path.join(__dirname, "data", "analytics.json");
+const CHECKPOINT_FILE = path.join(__dirname, "data", "analytics_checkpoint.json");
 const REBUILD_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // сами по себе пересобираем не чаще раза в 30 дней
 const CONCURRENCY = 2; // ниже, чем раньше — на маленьком тарифе Railway сборка
 // на всю базу (~6500+ фигурок) при параллельности 6 упирается в лимит памяти
-// контейнера и роняет весь процесс (см. комментарий в index.js) ещё до того,
-// как соберётся даже 1/20 базы. При параллельности 2 нагрузка на память и на
-// herobloks.com ощутимо меньше, а сама сборка просто идёт дольше.
+// контейнера и роняет весь процесс ещё до того, как соберётся даже 1/20 базы.
+// При параллельности 2 нагрузка на память и на herobloks.com ощутимо меньше,
+// а сама сборка просто идёт дольше.
+const CHECKPOINT_EVERY = 100; // сохранять прогресс на диск каждые N фигурок
+const MAX_TOP = 15;
 
 let building = false;
-let cache = loadFromDisk();
+let cache = loadJson(CACHE_FILE);
 
-function loadFromDisk() {
+function loadJson(file) {
   try {
-    return JSON.parse(fs.readFileSync(CACHE_FILE, "utf8"));
+    return JSON.parse(fs.readFileSync(file, "utf8"));
   } catch (e) {
     return null;
   }
 }
 
-function saveToDisk(data) {
+function saveJson(file, data) {
   try {
-    fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2), "utf8");
+    fs.writeFileSync(file, JSON.stringify(data), "utf8");
   } catch (e) {
-    console.error("analytics: не удалось сохранить кэш на диск:", e.message);
+    console.error(`analytics: не удалось сохранить ${path.basename(file)} на диск:`, e.message);
   }
 }
 
@@ -56,83 +69,92 @@ function isBuilding() {
   return building;
 }
 
-async function fetchWithConcurrency(items, limit, worker) {
-  let cursor = 0;
-  async function run() {
-    while (cursor < items.length) {
-      const i = cursor++;
-      await worker(items[i], i);
-    }
-  }
-  const workers = Array.from({ length: Math.min(limit, items.length) }, run);
-  await Promise.all(workers);
+// Держит только MAX_TOP лучших элементов по cmp — не нужно хранить в памяти
+// весь список фигурок, чтобы в конце найти топ-15.
+function insertTop(list, item, cmp) {
+  list.push(item);
+  list.sort(cmp);
+  if (list.length > MAX_TOP) list.length = MAX_TOP;
 }
 
 /**
  * Обходит всю базу фигурок и пересчитывает статистику. onProgress(done, total)
  * вызывается время от времени, чтобы можно было показать прогресс (например
  * в чате бота). Возвращает готовый объект статистики (и заодно сохраняет его
- * в кэш и на диск).
+ * в кэш и на диск). Если предыдущий запуск был прерван (падение процесса),
+ * продолжает с сохранённого чекпоинта, а не с начала.
  */
 async function buildAnalytics(onProgress) {
   if (building) return cache;
   building = true;
   try {
     const list = herobloks.getAllFigures(); // [{href, brand, serial, name}]
-    const results = new Array(list.length).fill(null);
-    let done = 0;
 
-    await fetchWithConcurrency(list, CONCURRENCY, async (item, i) => {
-      try {
-        const details = await herobloks.fetchFigureDetails(item.href);
-        const year = details.year ? parseInt(details.year, 10) : null;
-        results[i] = {
-          href: item.href,
-          name: details.name || item.name,
-          brand: details.brand || item.brand,
-          serial: details.serial || item.serial,
-          year: Number.isFinite(year) ? year : null,
-          owners: typeof details.owners === "number" ? details.owners : 0,
-          imageUrl: details.imageUrl || null
-        };
-      } catch (e) {
-        results[i] = null;
-      }
-      done++;
-      if (onProgress && done % 250 === 0) onProgress(done, list.length);
-    });
-
-    const valid = results.filter(Boolean);
-
-    const mostOwned = valid
-      .filter(f => f.owners > 0)
-      .sort((a, b) => b.owners - a.owners)
-      .slice(0, 15);
-
-    const rare = valid
-      .filter(f => f.owners > 0)
-      .sort((a, b) => a.owners - b.owners)
-      .slice(0, 15);
-
-    const yearCounts = new Map();
-    for (const f of valid) {
-      if (!f.year) continue;
-      yearCounts.set(f.year, (yearCounts.get(f.year) || 0) + 1);
+    let checkpoint = loadJson(CHECKPOINT_FILE);
+    if (!checkpoint || checkpoint.total !== list.length) {
+      checkpoint = { cursor: 0, total: list.length, mostOwned: [], rare: [], yearCounts: {} };
     }
-    const byYear = Array.from(yearCounts.entries())
-      .map(([year, count]) => ({ year, count }))
+
+    let cursor = checkpoint.cursor;
+    const mostOwned = checkpoint.mostOwned;
+    const rare = checkpoint.rare;
+    const yearCounts = checkpoint.yearCounts;
+
+    if (onProgress && cursor > 0) onProgress(cursor, list.length);
+
+    while (cursor < list.length) {
+      const batchEnd = Math.min(cursor + CONCURRENCY, list.length);
+      const batch = [];
+      for (let i = cursor; i < batchEnd; i++) batch.push(list[i]);
+
+      await Promise.all(batch.map(async item => {
+        try {
+          const details = await herobloks.fetchFigureDetails(item.href);
+          const year = details.year ? parseInt(details.year, 10) : null;
+          const owners = typeof details.owners === "number" ? details.owners : 0;
+          const rec = {
+            href: item.href,
+            name: details.name || item.name,
+            brand: details.brand || item.brand,
+            serial: details.serial || item.serial,
+            year: Number.isFinite(year) ? year : null,
+            owners,
+            imageUrl: details.imageUrl || null
+          };
+          if (owners > 0) {
+            insertTop(mostOwned, rec, (a, b) => b.owners - a.owners);
+            insertTop(rare, rec, (a, b) => a.owners - b.owners);
+          }
+          if (rec.year) yearCounts[rec.year] = (yearCounts[rec.year] || 0) + 1;
+        } catch (e) {
+          // Пропускаем — одна неудачная фигурка не должна ронять весь обход.
+        }
+      }));
+
+      cursor = batchEnd;
+
+      if (cursor % CHECKPOINT_EVERY < CONCURRENCY || cursor === list.length) {
+        saveJson(CHECKPOINT_FILE, { cursor, total: list.length, mostOwned, rare, yearCounts });
+      }
+      if (onProgress && (cursor % 250 < CONCURRENCY || cursor === list.length)) {
+        onProgress(cursor, list.length);
+      }
+    }
+
+    const byYear = Object.keys(yearCounts)
+      .map(year => ({ year: parseInt(year, 10), count: yearCounts[year] }))
       .sort((a, b) => a.year - b.year);
 
     const data = {
       builtAt: new Date().toISOString(),
-      totalFigures: valid.length,
+      totalFigures: list.length,
       mostOwned,
       rare,
       byYear
     };
     cache = data;
-    saveToDisk(data);
-    if (onProgress) onProgress(list.length, list.length);
+    saveJson(CACHE_FILE, data);
+    try { fs.unlinkSync(CHECKPOINT_FILE); } catch (e) {}
     return data;
   } finally {
     building = false;
@@ -140,7 +162,9 @@ async function buildAnalytics(onProgress) {
 }
 
 // При старте сервера — если статистики ещё нет или она давно не обновлялась,
-// запускаем пересчёт в фоне (не блокируя работу остального API).
+// запускаем пересчёт в фоне (не блокируя работу остального API). Сейчас этот
+// автозапуск отключён в index.js (см. комментарий там) — статистика считается
+// только вручную командой /rebuildstats.
 function maybeAutoBuild() {
   const stale = !cache || (Date.now() - new Date(cache.builtAt).getTime() > REBUILD_AFTER_MS);
   if (stale && !building) {

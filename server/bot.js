@@ -59,26 +59,46 @@ const GROUP_PAGE_SIZE = 15;
 // страницу мини-приложения у себя внутри (бывает, особенно в Desktop-версии):
 // новый номер версии заставляет считать это другим адресом и скачать страницу
 // заново. Увеличивайте v при каждом заметном изменении find-app.html.
-const WEBAPP_VERSION = process.env.WEBAPP_VERSION || "2";
-const WEBAPP_URL = (process.env.WEBAPP_URL || "https://mostik-shop-production.up.railway.app/find-app.html") + "?v=" + WEBAPP_VERSION;
-const mainKeyboard = {
-  reply_markup: {
-    keyboard: [
-      [FIND_BUTTON_TEXT],
-      [{ text: WEBAPP_BUTTON_TEXT, web_app: { url: WEBAPP_URL } }]
-    ],
-    resize_keyboard: true
-  }
-};
+const WEBAPP_VERSION = process.env.WEBAPP_VERSION || "3";
+const WEBAPP_BASE_URL = (process.env.WEBAPP_URL || "https://mostik-shop-production.up.railway.app/find-app.html") + "?v=" + WEBAPP_VERSION;
+
+// На некоторых клиентах Telegram (замечено на Desktop-версии) мини-приложение
+// не получает initData/initDataUnsafe.user вообще — то есть штатный способ
+// Telegram узнать, кто открыл Web App, там просто не срабатывает, и вишлист
+// внутри мини-приложения не понимал, чей это аккаунт. Поэтому подстраховываемся:
+// бот и так точно знает, кто нажал /start (msg.from), и сразу подставляет
+// его Telegram id (и имя) прямо в ссылку кнопки — так мини-приложение узнает
+// пользователя из самого адреса страницы, даже если Telegram ничего не передал.
+function webAppUrlFor(user) {
+  const params = new URLSearchParams();
+  params.set("uid", String(user.id));
+  if (user.first_name) params.set("fn", user.first_name);
+  if (user.username) params.set("un", user.username);
+  return WEBAPP_BASE_URL + "&" + params.toString();
+}
+
+function buildMainKeyboard(user) {
+  return {
+    reply_markup: {
+      keyboard: [
+        [FIND_BUTTON_TEXT],
+        [{ text: WEBAPP_BUTTON_TEXT, web_app: { url: webAppUrlFor(user) } }]
+      ],
+      resize_keyboard: true
+    }
+  };
+}
 
 // Кнопка мини-приложения, приклеенная прямо к сообщению (а не спрятана
 // внизу в клавиатуре) — чтобы сразу после /start её было видно и можно было
 // нажать в один тап.
-const webAppInlineKeyboard = {
-  reply_markup: {
-    inline_keyboard: [[{ text: WEBAPP_BUTTON_TEXT, web_app: { url: WEBAPP_URL } }]]
-  }
-};
+function buildWebAppInlineKeyboard(user) {
+  return {
+    reply_markup: {
+      inline_keyboard: [[{ text: WEBAPP_BUTTON_TEXT, web_app: { url: webAppUrlFor(user) } }]]
+    }
+  };
+}
 
 function isAdmin(userId) {
   return ADMIN_IDS.includes(String(userId));
@@ -94,13 +114,13 @@ bot.onText(/^\/start/, msg => {
     bot.sendMessage(
       chatId,
       `Привет! Это бот магазина Mostik Shop.\nВаш Telegram id: ${msg.from.id}\n\nНажмите «${FIND_BUTTON_TEXT}» или просто напишите артикул фигурки (например PG-206) — пришлю фото и описание.\n\nПонравившиеся фигурки добавляйте в вишлист кнопкой «❤️ В вишлист» под карточкой, а затем командой /wishlist отправьте список мне — я поищу их в продаже.`,
-      mainKeyboard
+      buildMainKeyboard(msg.from)
     );
-    bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, webAppInlineKeyboard);
+    bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, buildWebAppInlineKeyboard(msg.from));
     return;
   }
-  bot.sendMessage(chatId, "Привет! Вы администратор магазина.\n\n" + flow.helpText(), mainKeyboard);
-  bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, webAppInlineKeyboard);
+  bot.sendMessage(chatId, "Привет! Вы администратор магазина.\n\n" + flow.helpText(), buildMainKeyboard(msg.from));
+  bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, buildWebAppInlineKeyboard(msg.from));
 });
 
 bot.onText(/^\/wishlist/, msg => {
@@ -131,8 +151,9 @@ bot.onText(/^\/help/, msg => {
 
 // Пересчитывает статистику "у кого сколько фигурок / по годам" для главного
 // экрана мини-приложения — обход всей базы (~6500+ фигурок), поэтому
-// занимает несколько минут. Обычно пересчитывается сама раз в 30 дней при
-// старте сервера, эта команда — чтобы обновить вручную раньше, если нужно.
+// занимает несколько минут. Прогресс сохраняется на диск по ходу дела, так
+// что если процесс упадёт по памяти на середине — команду можно запустить
+// ещё раз, и обход продолжится с того места, где остановился, а не с нуля.
 bot.onText(/^\/rebuildstats/, msg => {
   const chatId = msg.chat.id;
   if (!isAdmin(msg.from.id)) return denyAccess(chatId);
@@ -140,7 +161,7 @@ bot.onText(/^\/rebuildstats/, msg => {
     bot.sendMessage(chatId, "Пересчёт уже идёт, подождите — сообщу, когда будет готово.");
     return;
   }
-  bot.sendMessage(chatId, "Начинаю пересчёт статистики по всем фигуркам — это займёт несколько минут, напишу, когда закончу.");
+  bot.sendMessage(chatId, "Начинаю (или продолжаю) пересчёт статистики по всем фигуркам — это может занять несколько минут, напишу, когда закончу. Если сервер вдруг перезапустится посреди процесса — просто отправьте команду ещё раз, прогресс не потеряется.");
   analytics.buildAnalytics((done, total) => {
     if (done % 1500 === 0 && done < total) {
       bot.sendMessage(chatId, `Прогресс: ${done}/${total}...`).catch(() => {});
