@@ -23,7 +23,11 @@ const herobloks = require("./herobloks");
 
 const CACHE_FILE = path.join(__dirname, "data", "analytics.json");
 const REBUILD_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // сами по себе пересобираем не чаще раза в 30 дней
-const CONCURRENCY = 6; // не грузим herobloks.com слишком сильно
+const CONCURRENCY = 2; // ниже, чем раньше — на маленьком тарифе Railway сборка
+// на всю базу (~6500+ фигурок) при параллельности 6 упирается в лимит памяти
+// контейнера и роняет весь процесс (см. комментарий в index.js) ещё до того,
+// как соберётся даже 1/20 базы. При параллельности 2 нагрузка на память и на
+// herobloks.com ощутимо меньше, а сама сборка просто идёт дольше.
 
 let building = false;
 let cache = loadFromDisk();
