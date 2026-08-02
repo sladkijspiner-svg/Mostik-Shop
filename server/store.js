@@ -1,11 +1,13 @@
 // Простое хранилище товаров на JSON-файле.
-// Файл сохраняется между перезапусками сервиса и сбрасывается только при новом деплое
-// (если не подключён постоянный диск/volume — см. server/README.md).
+// Файл лежит в data/state/ — это папка на постоянном диске Railway (Volume),
+// который НЕ пересоздаётся при деплое (в отличие от обычных файлов
+// репозитория). Стартовая копия при самом первом запуске подготавливается
+// в server/bootstrap.js.
 
 const fs = require("fs");
 const path = require("path");
 
-const DATA_FILE = path.join(__dirname, "data", "products.json");
+const DATA_FILE = path.join(__dirname, "data", "state", "products.json");
 
 const CATEGORIES = [
   { slug: "marvel", title: "Минифигурки Marvel" },

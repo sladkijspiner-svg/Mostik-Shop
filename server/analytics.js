@@ -32,8 +32,11 @@ const fs = require("fs");
 const path = require("path");
 const herobloks = require("./herobloks");
 
-const ARCHIVE_DIR = path.join(__dirname, "data", "analytics_archive");
-const CHECKPOINT_FILE = path.join(__dirname, "data", "analytics_checkpoint.json");
+// Обе папки — на постоянном диске Railway (data/state/, не сбрасывается
+// деплоями, см. server/bootstrap.js), иначе собранные архивы пропадали бы
+// при каждом обновлении кода, как раньше пропадали вишлисты.
+const ARCHIVE_DIR = path.join(__dirname, "data", "state", "analytics_archive");
+const CHECKPOINT_FILE = path.join(__dirname, "data", "state", "analytics_checkpoint.json");
 const CONCURRENCY = 2; // на маленьком тарифе Railway обход всей базы при
 // параллельности 6 упирался в лимит памяти контейнера и ронял весь процесс.
 const CHECKPOINT_EVERY = 100; // сохранять прогресс на диск каждые N фигурок

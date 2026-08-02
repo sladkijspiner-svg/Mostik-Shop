@@ -2,6 +2,11 @@ require("dotenv").config();
 const path = require("path");
 const express = require("express");
 const cors = require("cors");
+// Готовит "живые" данные (товары/вишлисты/архивы статистики) в data/state/ —
+// папке на постоянном диске Railway, которая не сбрасывается деплоями (см.
+// подробное объяснение в bootstrap.js). Должно выполниться раньше, чем
+// store/wishlist/analytics впервые попробуют прочитать свои файлы.
+require("./bootstrap").run();
 const store = require("./store");
 const herobloks = require("./herobloks");
 const wishlist = require("./wishlist");

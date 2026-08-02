@@ -1,12 +1,13 @@
 // Вишлист покупателей: каждый пользователь может отметить фигурки, которые
 // хочет купить, а потом одной кнопкой отправить список администратору
 // магазина, чтобы тот поискал их в продаже. Хранится в простом JSON-файле —
-// так же, как товары в store.js.
+// так же, как товары в store.js. Файл лежит в data/state/ (постоянный диск
+// Railway, не сбрасывается деплоями — см. server/bootstrap.js).
 
 const fs = require("fs");
 const path = require("path");
 
-const DATA_FILE = path.join(__dirname, "data", "wishlists.json");
+const DATA_FILE = path.join(__dirname, "data", "state", "wishlists.json");
 
 function loadAll() {
   try {
