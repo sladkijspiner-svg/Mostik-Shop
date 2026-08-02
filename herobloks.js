@@ -219,16 +219,36 @@ function buildNameList() {
 
 /**
  * Ищет фигурки по названию персонажа (по-английски, транслитом или по паре
- * популярных русских названий). Возвращает до 10 совпадений
- * {href, brand, serial, name}.
+ * популярных русских названий). Возвращает совпадения
+ * {href, brand, serial, name, label} (без ограничения по числу — группировкой
+ * и ограничением занимается groupFiguresByName).
  */
-function findFigureByName(rawQuery) {
+function findFigureByName(rawQuery, limit) {
   if (!rawQuery) return [];
   const list = buildNameList();
   const lower = translateQueryHints(rawQuery.toLowerCase().trim());
   if (lower.length < 2) return [];
   const matches = list.filter(item => item.nameLower.includes(lower));
-  return matches.slice(0, 10);
+  return matches.slice(0, limit || 150);
+}
+
+/**
+ * Группирует результаты поиска по названию образа/варианта персонажа —
+ * например у "Wolverine" бывают отдельные образы "Ninja Strike Wolverine",
+ * "Symbiote Wolverine", а внутри каждого образа — несколько версий от
+ * разных брендов-производителей (артикулы). Возвращает массив вида
+ * {name, items: [...]}, отсортированный по названию, максимум maxGroups штук.
+ */
+function groupFiguresByName(matches, maxGroups) {
+  const groups = new Map(); // name -> items[]
+  for (const item of matches) {
+    if (!groups.has(item.name)) groups.set(item.name, []);
+    groups.get(item.name).push(item);
+  }
+  const result = Array.from(groups.entries())
+    .map(([name, items]) => ({ name, items }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return result.slice(0, maxGroups || 20);
 }
 
 function decodeHtmlEntities(str) {
@@ -287,4 +307,4 @@ async function fetchFigureDetails(href) {
   };
 }
 
-module.exports = { findFigureMatches, findFigureByName, fetchFigureDetails, compactCode };
+module.exports = { findFigureMatches, findFigureByName, groupFiguresByName, fetchFigureDetails, compactCode };

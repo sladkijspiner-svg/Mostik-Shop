@@ -30,8 +30,12 @@ const addSessions = new Map();
 // артикул или название персонажа следующим сообщением.
 const findSessions = new Map();
 
-// chatId -> последний список вариантов поиска по названию (чтобы по нажатию
-// на кнопку понять, какую именно фигурку показать).
+// chatId -> последний список образов/вариантов персонажа (первый уровень
+// выбора, например «Ninja Strike Wolverine» / «Symbiote Wolverine»).
+const lastGroups = new Map();
+
+// chatId -> последний список конкретных фигурок на выбор (второй уровень —
+// артикулы разных производителей одного и того же образа).
 const lastResults = new Map();
 
 const FIND_BUTTON_TEXT = "🔍 Найти фигурку";
@@ -133,8 +137,21 @@ bot.on("callback_query", async query => {
   const chatId = query.message.chat.id;
   const data = query.data || "";
 
-  // Выбор конкретной фигурки из списка результатов поиска по названию —
-  // доступно любому пользователю, не только админу.
+  // Выбор образа/варианта персонажа (первый уровень, например
+  // «Ninja Strike Wolverine») — доступно любому пользователю.
+  if (data.startsWith("figgroup:")) {
+    bot.answerCallbackQuery(query.id);
+    const idx = parseInt(data.slice("figgroup:".length), 10);
+    const groups = lastGroups.get(chatId);
+    if (!groups || !groups[idx]) {
+      bot.sendMessage(chatId, "Этот список уже устарел — начните поиск заново кнопкой «" + FIND_BUTTON_TEXT + "».");
+      return;
+    }
+    await presentItems(chatId, groups[idx].items);
+    return;
+  }
+
+  // Выбор конкретной фигурки (артикула) из списка — доступно любому пользователю.
   if (data.startsWith("figpick:")) {
     bot.answerCallbackQuery(query.id);
     const idx = parseInt(data.slice("figpick:".length), 10);
@@ -217,6 +234,9 @@ async function handleFigureCodeLookup(msg) {
 
 // Обрабатывает запрос из режима «Найти фигурку»: сначала пробует как артикул,
 // если не нашлось — ищет по названию персонажа (в т.ч. по паре русских имён).
+// Поиск по названию — двухуровневый: сперва показываем список образов
+// («Wolverine», «Ninja Strike Wolverine», «Symbiote Wolverine» и т.п.),
+// а после выбора образа — список конкретных артикулов разных производителей.
 async function handleFindQuery(msg) {
   const chatId = msg.chat.id;
   const text = msg.text.trim();
@@ -232,16 +252,33 @@ async function handleFindQuery(msg) {
     bot.sendMessage(chatId, "Ничего не нашлось. Попробуйте другой артикул или название (можно по-английски).");
     return;
   }
-  if (nameMatches.length === 1) {
-    await sendFigures(chatId, nameMatches);
+
+  const groups = herobloks.groupFiguresByName(nameMatches);
+
+  if (groups.length === 1) {
+    await presentItems(chatId, groups[0].items);
     return;
   }
 
-  lastResults.set(chatId, nameMatches);
+  lastGroups.set(chatId, groups);
   const keyboard = {
-    inline_keyboard: nameMatches.map((item, i) => [{ text: item.label || item.name, callback_data: "figpick:" + i }])
+    inline_keyboard: groups.map((g, i) => [{ text: `${g.name} (${g.items.length})`, callback_data: "figgroup:" + i }])
   };
-  bot.sendMessage(chatId, `Нашлось несколько вариантов (${nameMatches.length}) — выберите нужный:`, { reply_markup: keyboard });
+  bot.sendMessage(chatId, `Нашлось несколько образов (${groups.length}) — выберите нужный:`, { reply_markup: keyboard });
+}
+
+// Показывает конкретные фигурки: если она одна — сразу присылает фото,
+// если несколько (разные производители одного образа) — список на выбор.
+async function presentItems(chatId, items) {
+  if (items.length === 1) {
+    await sendFigures(chatId, items);
+    return;
+  }
+  lastResults.set(chatId, items);
+  const keyboard = {
+    inline_keyboard: items.map((item, i) => [{ text: item.label || item.name, callback_data: "figpick:" + i }])
+  };
+  bot.sendMessage(chatId, `Нашлось ${items.length} вариантов — выберите нужный:`, { reply_markup: keyboard });
 }
 
 // Забирает описание и фото фигурки(ок) с herobloks.com и отправляет в чат.
