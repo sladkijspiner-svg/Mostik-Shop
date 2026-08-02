@@ -2,6 +2,7 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const store = require("./store");
 const flow = require("./telegramFlow");
+const herobloks = require("./herobloks");
 
 const TOKEN = process.env.BOT_TOKEN;
 const ADMIN_IDS = (process.env.ADMIN_IDS || "")
@@ -130,25 +131,63 @@ bot.on("callback_query", query => {
   }
 });
 
-bot.on("message", msg => {
+bot.on("message", async msg => {
   // Пропускаем команды и сообщения без текста — их обрабатывают onText-хендлеры выше.
   if (!msg.text || msg.text.startsWith("/")) return;
   const chatId = msg.chat.id;
-  if (!isAdmin(msg.from.id)) return;
 
-  const session = addSessions.get(chatId);
-  if (!session || session.step === "category" || session.step === "done") return;
-
-  const result = flow.handleAddStep(session, msg.text);
-  if (result.error) {
-    bot.sendMessage(chatId, result.error);
-  } else if (result.done) {
-    addSessions.delete(chatId);
-    bot.sendMessage(chatId, `Товар добавлен ✅\n${flow.formatProductLine(result.product)}`);
-  } else {
-    bot.sendMessage(chatId, result.prompt);
+  // Если это админ и у него сейчас активен пошаговый /add — ведём его дальше по этому сценарию.
+  if (isAdmin(msg.from.id)) {
+    const session = addSessions.get(chatId);
+    if (session && session.step !== "category" && session.step !== "done") {
+      const result = flow.handleAddStep(session, msg.text);
+      if (result.error) {
+        bot.sendMessage(chatId, result.error);
+      } else if (result.done) {
+        addSessions.delete(chatId);
+        bot.sendMessage(chatId, `Товар добавлен ✅\n${flow.formatProductLine(result.product)}`);
+      } else {
+        bot.sendMessage(chatId, result.prompt);
+      }
+      return;
+    }
   }
+
+  // Для всех остальных сообщений (от любого пользователя) — пробуем понять,
+  // не написал ли человек код фигурки (PG206, pg-206, pogo 206, пг206 и т.п.)
+  await handleFigureCodeLookup(msg);
 });
+
+// Ищет код фигурки в сообщении и, если находит совпадение в локальной базе
+// herobloks.com, присылает пользователю фото и описание этой фигурки.
+async function handleFigureCodeLookup(msg) {
+  const chatId = msg.chat.id;
+  const matches = herobloks.findFigureMatches(msg.text);
+  if (matches.length === 0) return;
+
+  for (const match of matches) {
+    try {
+      const details = await herobloks.fetchFigureDetails(match.h);
+      const lines = [];
+      lines.push(`🧱 ${details.name || details.basename || "Фигурка"}`);
+      if (details.brand || details.serial) {
+        lines.push(`${details.brand || ""} ${details.serial || ""}`.trim());
+      }
+      if (details.year) lines.push(`Год: ${details.year}`);
+      if (details.theme) lines.push(`Тема: ${details.theme}`);
+      lines.push(`Подробнее: ${details.pageUrl}`);
+      const caption = lines.join("\n");
+
+      if (details.imageUrl) {
+        await bot.sendPhoto(chatId, details.imageUrl, { caption });
+      } else {
+        await bot.sendMessage(chatId, caption);
+      }
+    } catch (e) {
+      console.error("herobloks lookup error:", e.message);
+    }
+  }
+}
 
 console.log("Telegram-бот запущен" + (ADMIN_IDS.length ? " для админов: " + ADMIN_IDS.join(", ") : ""));
 
