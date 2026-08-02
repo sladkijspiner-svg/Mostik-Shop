@@ -550,6 +550,23 @@
         }
       } catch (e) {}
     }
+    // На некоторых клиентах (замечено на Desktop-версии Telegram) initData
+    // не приходит вообще никак — WebApp API просто не отдаёт данные о
+    // пользователе. Тогда бот сам подставляет Telegram id прямо в адрес
+    // страницы при отправке кнопки (см. server/bot.js, webAppUrlFor) — и
+    // мы читаем его отсюда, из параметров ссылки, как последний запасной вариант.
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const uid = params.get("uid");
+      if (uid) {
+        cachedTgUser = {
+          id: uid,
+          first_name: params.get("fn") || "",
+          username: params.get("un") || ""
+        };
+        return cachedTgUser;
+      }
+    } catch (e) {}
     return null;
   }
 
