@@ -26,6 +26,22 @@ bot.on("polling_error", err => console.error("polling_error:", err.message));
 // chatId -> { step, data }
 const addSessions = new Map();
 
+// chatId -> true, если человек нажал «Найти фигурку» и бот ждёт от него
+// артикул или название персонажа следующим сообщением.
+const findSessions = new Map();
+
+// chatId -> последний список вариантов поиска по названию (чтобы по нажатию
+// на кнопку понять, какую именно фигурку показать).
+const lastResults = new Map();
+
+const FIND_BUTTON_TEXT = "🔍 Найти фигурку";
+const mainKeyboard = {
+  reply_markup: {
+    keyboard: [[FIND_BUTTON_TEXT]],
+    resize_keyboard: true
+  }
+};
+
 function isAdmin(userId) {
   return ADMIN_IDS.includes(String(userId));
 }
@@ -37,10 +53,14 @@ function denyAccess(chatId) {
 bot.onText(/^\/start/, msg => {
   const chatId = msg.chat.id;
   if (!isAdmin(msg.from.id)) {
-    bot.sendMessage(chatId, `Привет! Это бот магазина MINIFIG STORE.\nВаш Telegram id: ${msg.from.id}`);
+    bot.sendMessage(
+      chatId,
+      `Привет! Это бот магазина MINIFIG STORE.\nВаш Telegram id: ${msg.from.id}\n\nНажмите «${FIND_BUTTON_TEXT}» или просто напишите артикул фигурки (например PG-206) — пришлю фото и описание.`,
+      mainKeyboard
+    );
     return;
   }
-  bot.sendMessage(chatId, "Привет! Вы администратор магазина.\n\n" + flow.helpText());
+  bot.sendMessage(chatId, "Привет! Вы администратор магазина.\n\n" + flow.helpText(), mainKeyboard);
 });
 
 bot.onText(/^\/help/, msg => {
@@ -109,14 +129,29 @@ bot.onText(/^\/stock\b/, msg => {
   bot.sendMessage(chatId, updated ? `Новый остаток «${updated.name}»: ${updated.stock}` : `Товар с id «${args.id}» не найден.`);
 });
 
-bot.on("callback_query", query => {
+bot.on("callback_query", async query => {
   const chatId = query.message.chat.id;
+  const data = query.data || "";
+
+  // Выбор конкретной фигурки из списка результатов поиска по названию —
+  // доступно любому пользователю, не только админу.
+  if (data.startsWith("figpick:")) {
+    bot.answerCallbackQuery(query.id);
+    const idx = parseInt(data.slice("figpick:".length), 10);
+    const results = lastResults.get(chatId);
+    if (!results || !results[idx]) {
+      bot.sendMessage(chatId, "Этот список уже устарел — начните поиск заново кнопкой «" + FIND_BUTTON_TEXT + "».");
+      return;
+    }
+    await sendFigures(chatId, [results[idx]]);
+    return;
+  }
+
   if (!isAdmin(query.from.id)) {
     bot.answerCallbackQuery(query.id);
     return denyAccess(chatId);
   }
 
-  const data = query.data || "";
   if (data.startsWith("addcat:")) {
     const session = addSessions.get(chatId);
     if (!session) {
@@ -153,6 +188,20 @@ bot.on("message", async msg => {
     }
   }
 
+  // Нажали кнопку «Найти фигурку» — включаем режим ожидания артикула/названия.
+  if (msg.text.trim() === FIND_BUTTON_TEXT) {
+    findSessions.set(chatId, true);
+    bot.sendMessage(chatId, "Введите артикул фигурки (например PG-206) или название персонажа (например Wolverine или Росомаха):");
+    return;
+  }
+
+  // Мы ждали от этого человека артикул/название после нажатия кнопки.
+  if (findSessions.get(chatId)) {
+    findSessions.delete(chatId);
+    await handleFindQuery(msg);
+    return;
+  }
+
   // Для всех остальных сообщений (от любого пользователя) — пробуем понять,
   // не написал ли человек код фигурки (PG206, pg-206, pogo 206, пг206 и т.п.)
   await handleFigureCodeLookup(msg);
@@ -161,13 +210,47 @@ bot.on("message", async msg => {
 // Ищет код фигурки в сообщении и, если находит совпадение в локальной базе
 // herobloks.com, присылает пользователю фото и описание этой фигурки.
 async function handleFigureCodeLookup(msg) {
-  const chatId = msg.chat.id;
   const matches = herobloks.findFigureMatches(msg.text);
   if (matches.length === 0) return;
+  await sendFigures(msg.chat.id, matches);
+}
 
+// Обрабатывает запрос из режима «Найти фигурку»: сначала пробует как артикул,
+// если не нашлось — ищет по названию персонажа (в т.ч. по паре русских имён).
+async function handleFindQuery(msg) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+
+  const codeMatches = herobloks.findFigureMatches(text);
+  if (codeMatches.length > 0) {
+    await sendFigures(chatId, codeMatches);
+    return;
+  }
+
+  const nameMatches = herobloks.findFigureByName(text);
+  if (nameMatches.length === 0) {
+    bot.sendMessage(chatId, "Ничего не нашлось. Попробуйте другой артикул или название (можно по-английски).");
+    return;
+  }
+  if (nameMatches.length === 1) {
+    await sendFigures(chatId, nameMatches);
+    return;
+  }
+
+  lastResults.set(chatId, nameMatches);
+  const keyboard = {
+    inline_keyboard: nameMatches.map((item, i) => [{ text: item.label || item.name, callback_data: "figpick:" + i }])
+  };
+  bot.sendMessage(chatId, `Нашлось несколько вариантов (${nameMatches.length}) — выберите нужный:`, { reply_markup: keyboard });
+}
+
+// Забирает описание и фото фигурки(ок) с herobloks.com и отправляет в чат.
+// Если у фигурки несколько фото — присылает их все альбомом.
+async function sendFigures(chatId, matches) {
   for (const match of matches) {
+    const href = match.href || match.h;
     try {
-      const details = await herobloks.fetchFigureDetails(match.h);
+      const details = await herobloks.fetchFigureDetails(href);
       const lines = [];
       lines.push(`🧱 ${details.name || details.basename || "Фигурка"}`);
       if (details.brand || details.serial) {
@@ -178,8 +261,17 @@ async function handleFigureCodeLookup(msg) {
       lines.push(`Подробнее: ${details.pageUrl}`);
       const caption = lines.join("\n");
 
-      if (details.imageUrl) {
-        await bot.sendPhoto(chatId, details.imageUrl, { caption });
+      const photos = details.imageUrls && details.imageUrls.length ? details.imageUrls : (details.imageUrl ? [details.imageUrl] : []);
+
+      if (photos.length > 1) {
+        const media = photos.slice(0, 10).map((url, i) => ({
+          type: "photo",
+          media: url,
+          caption: i === 0 ? caption : undefined
+        }));
+        await bot.sendMediaGroup(chatId, media);
+      } else if (photos.length === 1) {
+        await bot.sendPhoto(chatId, photos[0], { caption });
       } else {
         await bot.sendMessage(chatId, caption);
       }

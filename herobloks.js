@@ -1,4 +1,4 @@
-// ---- Поиск фигурок по коду (PG-206 и т.п.) на herobloks.com ----
+// ---- Поиск фигурок по коду или по названию на herobloks.com ----
 //
 // У herobloks.com нет простого публичного API для поиска, поэтому вместо
 // "живого" поиска на их сайте бот использует свою локальную базу (файл
@@ -7,10 +7,12 @@
 // без официального Lego и без "самодельных" кастом-мастерских).
 //
 // Логика такая:
-//   1. Покупатель пишет боту код, например "PG206", "pg-206", "pogo 206", "пг206".
+//   1. Покупатель пишет боту код ("PG206", "pg-206", "pogo 206", "пг206")
+//      или название персонажа ("Wolverine", "Росомаха") — можно сразу в чат,
+//      а можно через кнопку «Найти фигурку».
 //   2. Бот приводит текст к единому виду и ищет совпадение в локальной базе.
 //   3. Если нашлось — бот идёт на страницу этой фигурки на herobloks.com
-//      "вживую", забирает оттуда картинку и описание и присылает покупателю.
+//      "вживую", забирает оттуда все фото и описание и присылает покупателю.
 //
 // Если базу нужно расширить (другие бренды/темы) — файл data/herobloks_index.json
 // можно пересобрать так же, как он был собран изначально, и просто заменить.
@@ -26,7 +28,7 @@ try {
   const count = Object.keys(INDEX.serials || {}).length;
   console.log(`herobloks: локальная база загружена, фигурок в индексе: ${count}`);
 } catch (e) {
-  console.warn("herobloks: не удалось загрузить data/herobloks_index.json — поиск по коду фигурок работать не будет.", e.message);
+  console.warn("herobloks: не удалось загрузить data/herobloks_index.json — поиск фигурок работать не будет.", e.message);
 }
 
 // Простая фонетическая транслитерация кириллицы в латиницу —
@@ -60,9 +62,9 @@ function brandNameVariants(slug) {
 }
 
 /**
- * Пытается найти фигурку(и) по произвольному тексту сообщения пользователя.
- * Возвращает массив совпадений вида {href, brand, serial} (без дублей по href),
- * максимум 5 штук.
+ * Пытается найти фигурку(и) по коду в произвольном тексте сообщения.
+ * Возвращает массив совпадений вида {h(ref), b(rand), s(erial)} без дублей,
+ * максимум 5 штук. Пустой массив, если похоже, что кода тут нет.
  */
 function findFigureMatches(rawMessage) {
   if (!rawMessage || !INDEX.serials) return [];
@@ -109,6 +111,126 @@ function findFigureMatches(rawMessage) {
   return Array.from(results.values()).slice(0, 5);
 }
 
+// ---- Поиск по названию персонажа ----
+
+// На herobloks.com названия фигур — только на английском. Небольшой словарь
+// частых русских названий персонажей Marvel, чтобы "Росомаха" тоже находило
+// "Wolverine". Список не претендует на полноту — по остальным именам поиск
+// сработает, если написать по-английски или транслитом.
+const RU_NAME_HINTS = {
+  "росомаха": "wolverine",
+  "человек паук": "spider-man",
+  "человек-паук": "spider-man",
+  "паук": "spider-man",
+  "железный человек": "iron man",
+  "тор": "thor",
+  "халк": "hulk",
+  "капитан америка": "captain america",
+  "черная пантера": "black panther",
+  "чёрная пантера": "black panther",
+  "локи": "loki",
+  "танос": "thanos",
+  "дэдпул": "deadpool",
+  "дедпул": "deadpool",
+  "веном": "venom",
+  "доктор стрэндж": "doctor strange",
+  "стрэндж": "strange",
+  "алая ведьма": "scarlet witch",
+  "ванда": "scarlet witch",
+  "соколиный глаз": "hawkeye",
+  "черная вдова": "black widow",
+  "чёрная вдова": "black widow",
+  "грут": "groot",
+  "ракета": "rocket",
+  "звёздный лорд": "star-lord",
+  "звездный лорд": "star-lord",
+  "гамора": "gamora",
+  "ник фьюри": "nick fury",
+  "мстители": "avengers",
+  "циклоп": "cyclops",
+  "шторм": "storm",
+  "магнето": "magneto",
+  "джаггернаут": "juggernaut",
+  "профессор икс": "professor x",
+  "мистик": "mystique",
+  "халкбастер": "hulkbuster",
+  "нэд": "ned",
+  "существо": "thing",
+  "серебряный серфер": "silver surfer",
+  "фантастическая четверка": "fantastic four",
+  "фантастическая четвёрка": "fantastic four",
+  "мистер фантастик": "mr fantastic",
+  "человек факел": "human torch",
+  "женщина невидимка": "invisible woman",
+  "квиксильвер": "quicksilver",
+  "ртуть": "quicksilver",
+  "человек муравей": "ant-man",
+  "человек-муравей": "ant-man",
+  "оса": "wasp",
+  "капитан марвел": "captain marvel",
+  "мисс марвел": "ms marvel",
+  "сорвиголова": "daredevil",
+  "электра": "elektra",
+  "джокер": "joker",
+  "халк оборотень": "she-hulk",
+  "женщина халк": "she-hulk"
+};
+
+function translateQueryHints(lower) {
+  let out = lower;
+  for (const ru of Object.keys(RU_NAME_HINTS)) {
+    if (out.includes(ru)) {
+      out = out.split(ru).join(RU_NAME_HINTS[ru]);
+    }
+  }
+  return out;
+}
+
+// slug из ссылки -> примерное отображаемое имя ("green-scar" -> "Green Scar").
+// Не идеально (не отличит дефис в имени от пробела), но для списка на выбор достаточно —
+// точное имя бот всё равно подтянет с самой страницы herobloks.com при показе карточки.
+function nameFromHref(href) {
+  const parts = href.split("/").filter(Boolean);
+  const slug = parts[parts.length - 1] || "";
+  const words = slug.split("-").filter(Boolean);
+  return words
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+let NAME_LIST = null; // [{href, brand, serial, name, nameLower}]
+function buildNameList() {
+  if (NAME_LIST) return NAME_LIST;
+  const seen = new Set();
+  const list = [];
+  for (const key of Object.keys(INDEX.serials || {})) {
+    for (const e of INDEX.serials[key]) {
+      if (seen.has(e.h)) continue;
+      seen.add(e.h);
+      const name = nameFromHref(e.h);
+      const brandLabel = (e.b || "").replace(/-/g, " ");
+      const label = `${name} (${brandLabel} ${e.s || ""})`.replace(/\s+/g, " ").trim();
+      list.push({ href: e.h, brand: e.b, serial: e.s, name, nameLower: name.toLowerCase(), label });
+    }
+  }
+  NAME_LIST = list;
+  return list;
+}
+
+/**
+ * Ищет фигурки по названию персонажа (по-английски, транслитом или по паре
+ * популярных русских названий). Возвращает до 10 совпадений
+ * {href, brand, serial, name}.
+ */
+function findFigureByName(rawQuery) {
+  if (!rawQuery) return [];
+  const list = buildNameList();
+  const lower = translateQueryHints(rawQuery.toLowerCase().trim());
+  if (lower.length < 2) return [];
+  const matches = list.filter(item => item.nameLower.includes(lower));
+  return matches.slice(0, 10);
+}
+
 function decodeHtmlEntities(str) {
   return str
     .replace(/&amp;/g, "&")
@@ -119,9 +241,9 @@ function decodeHtmlEntities(str) {
 }
 
 /**
- * Забирает "вживую" со страницы herobloks.com название, фото и характеристики
- * конкретной фигурки по относительной ссылке (например
- * "/figures/7400/pogo/-pg-206/deadpool-(ultimate)").
+ * Забирает "вживую" со страницы herobloks.com название, все фото и
+ * характеристики конкретной фигурки по относительной ссылке (например
+ * "/figures/7400/pogo/pg-206/deadpool-(ultimate)").
  */
 async function fetchFigureDetails(href) {
   const url = "https://www.herobloks.com" + href;
@@ -134,8 +256,14 @@ async function fetchFigureDetails(href) {
   const nameMatch = html.match(/id="name"[^>]*>([^<]+)</);
   const name = nameMatch ? decodeHtmlEntities(nameMatch[1].trim()) : null;
 
-  const imageMatch = html.match(/property="og:image"\s+content="([^"]+)"/);
-  const imageUrl = imageMatch ? imageMatch[1] : null;
+  // Все фото фигурки (не только главное) — на странице бывает несколько
+  // ракурсов/вариантов упаковки.
+  const imgRe = /https:\/\/static\.herobloks\.com\/x\/figure_images\/[^"'\s]+\.jpg/g;
+  const imageUrls = Array.from(new Set(html.match(imgRe) || []));
+  if (imageUrls.length === 0) {
+    const ogMatch = html.match(/property="og:image"\s+content="([^"]+)"/);
+    if (ogMatch) imageUrls.push(ogMatch[1]);
+  }
 
   const fields = {};
   const fieldRe = /hbtext"[^>]*>\s*([^<:]+):?\s*<\/div>[\s\S]{0,80}?hbvalue"[^>]*>\s*([\s\S]*?)\s*<\/div>/g;
@@ -153,9 +281,10 @@ async function fetchFigureDetails(href) {
     serial: fields["Serial"] || null,
     year: fields["Year"] || null,
     theme: fields["Theme"] || null,
-    imageUrl,
+    imageUrls,
+    imageUrl: imageUrls[0] || null,
     pageUrl: url
   };
 }
 
-module.exports = { findFigureMatches, fetchFigureDetails, compactCode };
+module.exports = { findFigureMatches, findFigureByName, fetchFigureDetails, compactCode };
