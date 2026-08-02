@@ -55,7 +55,12 @@ const GROUP_PAGE_SIZE = 15;
 // Адрес мини-приложения (Telegram WebApp) — та же страница, что и сайт
 // магазина, только другой файл. Можно переопределить переменной окружения
 // WEBAPP_URL, если адрес когда-нибудь изменится.
-const WEBAPP_URL = process.env.WEBAPP_URL || "https://mostik-shop-production.up.railway.app/find-app.html";
+// Хвост ?v=... — на случай, если клиент Telegram у кого-то закэшировал
+// страницу мини-приложения у себя внутри (бывает, особенно в Desktop-версии):
+// новый номер версии заставляет считать это другим адресом и скачать страницу
+// заново. Увеличивайте v при каждом заметном изменении find-app.html.
+const WEBAPP_VERSION = process.env.WEBAPP_VERSION || "2";
+const WEBAPP_URL = (process.env.WEBAPP_URL || "https://mostik-shop-production.up.railway.app/find-app.html") + "?v=" + WEBAPP_VERSION;
 const mainKeyboard = {
   reply_markup: {
     keyboard: [

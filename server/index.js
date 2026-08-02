@@ -20,6 +20,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Клиент Telegram (особенно Desktop) агрессивно кэширует HTML/JS мини-приложений
+// у себя в WebView — своим собственным кэшем поверх обычного HTTP, из-за чего
+// человек может подолгу видеть старую версию страницы даже после того, как на
+// сервере уже давно лежит исправленная. Явно запрещаем кэширование для .html,
+// чтобы каждое открытие мини-приложения гарантированно подтягивало свежий файл.
+app.use((req, res, next) => {
+  if (req.path.endsWith(".html")) {
+    res.set("Cache-Control", "no-store, no-cache, must-revalidate");
+    res.set("Pragma", "no-cache");
+    res.set("Expires", "0");
+  }
+  next();
+});
+
 // Сам сайт (index.html, каталог, корзина и т.д.) лежит в папке public/
 // и отдаётся с того же адреса, что и API — так у магазина одна ссылка.
 app.use(express.static(path.join(__dirname, "public")));
