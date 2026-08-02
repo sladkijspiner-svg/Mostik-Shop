@@ -88,7 +88,7 @@ app.post("/api/herobloks/thumbnails", async (req, res) => {
   const hrefs = Array.isArray(req.body.hrefs) ? req.body.hrefs.slice(0, 30) : [];
   if (hrefs.length === 0) return res.json({ items: [] });
   try {
-    const items = await fetchWithConcurrency(hrefs, 5);
+    const items = await fetchWithConcurrency(hrefs, 8);
     res.json({ items });
   } catch (e) {
     res.status(500).json({ error: "fetch_failed" });

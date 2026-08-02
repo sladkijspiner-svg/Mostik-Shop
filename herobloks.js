@@ -441,7 +441,22 @@ function decodeHtmlEntities(str) {
  * характеристики конкретной фигурки по относительной ссылке (например
  * "/figures/7400/pogo/pg-206/deadpool-(ultimate)").
  */
+// Кэш уже забранных карточек (href -> { at, data }) — раньше КАЖДЫЙ показ
+// миниатюры или карточки заново шёл на herobloks.com и парсил всю страницу
+// целиком, из-за этого и поиск, и картинки грузились медленно, особенно
+// повторно для одних и тех же популярных персонажей. Теперь второй и
+// последующие запросы того же href отдаются из памяти мгновенно. Данные на
+// herobloks.com почти никогда не меняются, поэтому срок жизни записи в
+// кэше долгий.
+const DETAILS_CACHE = new Map();
+const DETAILS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 часов
+
 async function fetchFigureDetails(href) {
+  const cached = DETAILS_CACHE.get(href);
+  if (cached && Date.now() - cached.at < DETAILS_CACHE_TTL_MS) {
+    return cached.data;
+  }
+
   const url = "https://www.herobloks.com" + href;
   const res = await fetch(url, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; MinifigStoreBot/1.0)" }
@@ -470,7 +485,7 @@ async function fetchFigureDetails(href) {
     fields[label] = value;
   }
 
-  return {
+  const data = {
     name,
     basename: fields["Basename"] || null,
     brand: fields["Brand"] || null,
@@ -481,6 +496,8 @@ async function fetchFigureDetails(href) {
     imageUrl: imageUrls[0] || null,
     pageUrl: url
   };
+  DETAILS_CACHE.set(href, { at: Date.now(), data });
+  return data;
 }
 
 // Слаг бренда из ссылки на фигурку: "/figures/7400/pogo/pg-206/deadpool-..."
