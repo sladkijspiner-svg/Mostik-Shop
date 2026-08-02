@@ -213,6 +213,21 @@ app.get("/api/herobloks/analytics", (req, res) => {
   });
 });
 
+// Временный служебный эндпоинт — просто чтобы можно было посмотреть прогресс
+// сборки статистики (сколько фигурок уже обработано) без доступа к консоли
+// сервера. Ничего не меняет, только читает файл чекпоинта с диска.
+app.get("/api/admin/checkpoint", (req, res) => {
+  try {
+    const fs = require("fs");
+    const cpPath = path.join(__dirname, "data", "state", "analytics_checkpoint.json");
+    if (!fs.existsSync(cpPath)) return res.json({ exists: false });
+    const cp = JSON.parse(fs.readFileSync(cpPath, "utf8"));
+    res.json({ exists: true, month: cp.month, cursor: cp.cursor, total: cp.total });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("API запущено на порту " + PORT);
