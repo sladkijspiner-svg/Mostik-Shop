@@ -55,6 +55,15 @@ const mainKeyboard = {
   }
 };
 
+// Кнопка мини-приложения, приклеенная прямо к сообщению (а не спрятана
+// внизу в клавиатуре) — чтобы сразу после /start её было видно и можно было
+// нажать в один тап.
+const webAppInlineKeyboard = {
+  reply_markup: {
+    inline_keyboard: [[{ text: WEBAPP_BUTTON_TEXT, web_app: { url: WEBAPP_URL } }]]
+  }
+};
+
 function isAdmin(userId) {
   return ADMIN_IDS.includes(String(userId));
 }
@@ -71,9 +80,11 @@ bot.onText(/^\/start/, msg => {
       `Привет! Это бот магазина Mostik Shop.\nВаш Telegram id: ${msg.from.id}\n\nНажмите «${FIND_BUTTON_TEXT}» или просто напишите артикул фигурки (например PG-206) — пришлю фото и описание.`,
       mainKeyboard
     );
+    bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, webAppInlineKeyboard);
     return;
   }
   bot.sendMessage(chatId, "Привет! Вы администратор магазина.\n\n" + flow.helpText(), mainKeyboard);
+  bot.sendMessage(chatId, `Или сразу откройте каталог с фото — «${WEBAPP_BUTTON_TEXT}»:`, webAppInlineKeyboard);
 });
 
 bot.onText(/^\/help/, msg => {
