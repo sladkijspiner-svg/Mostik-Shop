@@ -761,6 +761,7 @@
     return analyticsLoading;
   }
 
+  // Мировой топ (herobloks.com, "N users own this figure").
   function statRowHtml(f, index) {
     const brandSerial = `${f.brand || ""} ${f.serial || ""}`.trim();
     return `
@@ -769,6 +770,18 @@
         <div class="stat-thumb">${f.imageUrl ? `<img src="${f.imageUrl}" loading="lazy">` : ""}</div>
         <div class="stat-name">${escapeHtml(f.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}</div>
         <span class="stat-count">👤 ${f.owners}</span>
+      </div>
+    `;
+  }
+
+  // Топ по нашим собственным вишлистам (свои покупатели, не herobloks.com).
+  function wishlistRowHtml(f, index) {
+    const brandSerial = `${f.brand || ""} ${f.serial || ""}`.trim();
+    return `
+      <div class="stat-row" data-href="${escapeHtml(f.href)}">
+        <span class="stat-rank">${index + 1}</span>
+        <div class="stat-name">${escapeHtml(f.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}</div>
+        <span class="stat-count">❤️ ${f.count}</span>
       </div>
     `;
   }
@@ -794,31 +807,46 @@
       // статистику показывать уже не нужно, результат поиска важнее.
       if (qInput.value.trim().length >= 2) return;
 
-      if (!data || (!data.ready && !data.building)) {
-        contentEl.innerHTML = '<div class="empty">Статистика пока недоступна.</div>';
-        return;
-      }
-      if (!data.ready) {
-        contentEl.innerHTML = '<div class="empty">Собираю статистику по всей базе фигурок — это разовая операция и может занять несколько минут. Загляните чуть позже 🙂</div>';
-        return;
+      const wishlistTop = (data && data.wishlistTop) || [];
+      const hasWorldData = !!(data && data.topOwners);
+
+      let blocks = "";
+
+      // Раздел 1 — что хотят купить наши собственные покупатели (всегда
+      // доступен мгновенно, не зависит от сбора мировой статистики).
+      blocks += `
+        <div class="stat-block">
+          <div class="stat-title">❤️ Хотят у нас</div>
+          <div class="stat-list">${
+            wishlistTop.length
+              ? wishlistTop.map((f, i) => wishlistRowHtml(f, i)).join("")
+              : '<div class="empty" style="padding:10px 0">Пока никто ничего не добавил в вишлист.</div>'
+          }</div>
+        </div>
+      `;
+
+      // Раздел 2/3 — мировая статистика с herobloks.com (собирается раз в
+      // месяц в фоне, см. server/analytics.js).
+      if (hasWorldData) {
+        blocks += `
+          <div class="stat-block">
+            <div class="stat-title">👑 Зал славы коллекционеров</div>
+            <div class="stat-list">${(data.topOwners || []).map((f, i) => statRowHtml(f, i)).join("") || '<div class="empty" style="padding:10px 0">Нет данных.</div>'}</div>
+          </div>
+          <div class="stat-block">
+            <div class="stat-title">📅 По годам выпуска (до 2021)</div>
+            <div class="year-chart">${yearBarsHtml(data.byYear)}</div>
+          </div>
+        `;
+      } else if (data && data.building) {
+        blocks += '<div class="empty">Собираю мировую статистику по всей базе фигурок — это происходит раз в месяц и может занять время. Загляните чуть позже 🙂</div>';
+      } else {
+        blocks += '<div class="empty">Мировая статистика по фигуркам пока недоступна.</div>';
       }
 
       const wrap = document.createElement("div");
       wrap.className = "home-stats";
-      wrap.innerHTML = `
-        <div class="stat-block">
-          <div class="stat-title">🏆 Часто встречаются</div>
-          <div class="stat-list">${(data.mostOwned || []).map((f, i) => statRowHtml(f, i)).join("") || '<div class="empty" style="padding:10px 0">Нет данных.</div>'}</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-title">💎 Редкие находки</div>
-          <div class="stat-list">${(data.rare || []).map((f, i) => statRowHtml(f, i)).join("") || '<div class="empty" style="padding:10px 0">Нет данных.</div>'}</div>
-        </div>
-        <div class="stat-block">
-          <div class="stat-title">📅 По годам выпуска</div>
-          <div class="year-chart">${yearBarsHtml(data.byYear)}</div>
-        </div>
-      `;
+      wrap.innerHTML = blocks;
       wrap.querySelectorAll(".stat-row").forEach(row => {
         row.addEventListener("click", () => {
           showDetail({ href: row.getAttribute("data-href") }, renderHomeStats);
