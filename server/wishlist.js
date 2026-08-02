@@ -75,4 +75,36 @@ function formatWishlistText(who, userId, list) {
   return `📩 Вишлист от ${who} (id ${userId}):\n\n` + lines.join("\n\n");
 }
 
-module.exports = { getList, addItem, removeItem, clearList, formatWishlistText };
+// Считает, сколько раз каждая фигурка встречается в вишлистах ВСЕХ
+// покупателей нашего магазина — в отличие от статистики с herobloks.com,
+// тут вообще не нужно никуда ходить: считаем прямо по своему же файлу
+// data/wishlists.json, мгновенно и без риска для памяти сервера.
+// Используется для раздела главного экрана мини-приложения "хотят у нас".
+function getPopularInWishlists(limit) {
+  const all = loadAll();
+  const byHref = new Map(); // href -> { href, name, brand, serial, count }
+
+  for (const userId of Object.keys(all)) {
+    for (const item of all[userId] || []) {
+      if (!item || !item.href) continue;
+      const existing = byHref.get(item.href);
+      if (existing) {
+        existing.count++;
+      } else {
+        byHref.set(item.href, {
+          href: item.href,
+          name: item.name || null,
+          brand: item.brand || null,
+          serial: item.serial || null,
+          count: 1
+        });
+      }
+    }
+  }
+
+  return Array.from(byHref.values())
+    .sort((a, b) => b.count - a.count)
+    .slice(0, limit || 20);
+}
+
+module.exports = { getList, addItem, removeItem, clearList, formatWishlistText, getPopularInWishlists };

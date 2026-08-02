@@ -1,103 +1,150 @@
-// ---- Аналитика по фигуркам: "у кого сколько" и "в каком году выпускалось больше всего" ----
+// ---- Мировая статистика по фигуркам: "Зал славы коллекционеров" и разбивка по годам ----
 //
 // На каждой странице фигурки herobloks.com внизу показывает, сколько людей
-// отметили её у себя в коллекции ("N users own this figure"), а в карточке
-// есть год выпуска (Year). Эти же данные забирает herobloks.fetchFigureDetails
-// для обычного показа карточки — здесь просто проходимся по ВСЕЙ базе целиком
-// (все ~6500+ фигурок из data/herobloks_index.json) и считаем:
-//   - какие фигурки много у кого есть (популярные),
-//   - какие почти ни у кого нет (редкие),
-//   - сколько фигурок выходило в каждом году.
+// по всему миру отметили её у себя в коллекции ("N users own this figure"),
+// а в карточке есть год выпуска (Year). Эти же данные забирает
+// herobloks.fetchFigureDetails для обычного показа карточки — здесь
+// проходимся по ВСЕЙ базе целиком (все ~6500+ фигурок из
+// data/herobloks_index.json) и считаем:
+//   - топ-20 самых популярных у мировых коллекционеров ("Зал славы"),
+//   - сколько фигурок выходило в каждом году (учитываются только фигурки
+//     до 2021 года — по последним годам данные на herobloks.com ещё не
+//     устоялись).
 //
 // Обход всей базы — не быстрая операция (несколько минут, т.к. нужно сходить
 // на herobloks.com за каждой фигуркой по очереди с ограниченной
-// параллельностью, чтобы не перегружать их сайт), поэтому результат
-// считается не на каждый запрос, а один раз в фоне и сохраняется в файл
-// data/analytics.json. Пересобрать можно вручную командой бота /rebuildstats
-// (только для админа) — например, если через какое-то время захочется
-// свежие цифры.
+// параллельностью, чтобы не перегружать их сайт и не упереться в память на
+// маленьком тарифе Railway — см. историю в index.js), поэтому результат
+// считается не на каждый запрос, а раз в месяц и складывается в архив —
+// каждый месяц отдельный файл data/analytics_archive/YYYY-MM.json, который
+// НИКОГДА не удаляется и не перезаписывается. Так со временем можно будет
+// посмотреть, насколько сильно поменялся топ, скажем, за год.
 //
-// ВАЖНО про память: на маленьком тарифе Railway процесс один раз уже падал
-// по нехватке памяти прямо посреди такого обхода (см. историю в index.js —
-// автозапуск при старте сервера поэтому отключён). Чтобы одно случайное
-// падение не откатывало прогресс к нулю, промежуточный результат сохраняется
-// на диск (data/analytics_checkpoint.json) каждые CHECKPOINT_EVERY фигурок —
-// если процесс упадёт и /rebuildstats запустят заново, обход продолжится с
-// того места, где остановился, а не с начала. Плюс в памяти держим не весь
-// список (~6500 объектов), а только то, что реально нужно в конце — топ-15
-// популярных, топ-15 редких и счётчик по годам.
+// Расписания в привычном смысле (cron) тут нет — вместо этого при каждом
+// старте сервера (и по /rebuildstats) проверяем: есть ли уже архив за
+// текущий месяц? Если нет — начинаем (или продолжаем, если прошлая попытка
+// прервалась) его собирать. Прогресс каждые CHECKPOINT_EVERY фигурок
+// сохраняется в data/analytics_checkpoint.json, так что случайное падение
+// процесса не откатывает всё к нулю — при следующем запуске обход
+// продолжится с того места, где остановился.
 
 const fs = require("fs");
 const path = require("path");
 const herobloks = require("./herobloks");
 
-const CACHE_FILE = path.join(__dirname, "data", "analytics.json");
+const ARCHIVE_DIR = path.join(__dirname, "data", "analytics_archive");
 const CHECKPOINT_FILE = path.join(__dirname, "data", "analytics_checkpoint.json");
-const REBUILD_AFTER_MS = 30 * 24 * 60 * 60 * 1000; // сами по себе пересобираем не чаще раза в 30 дней
-const CONCURRENCY = 2; // ниже, чем раньше — на маленьком тарифе Railway сборка
-// на всю базу (~6500+ фигурок) при параллельности 6 упирается в лимит памяти
-// контейнера и роняет весь процесс ещё до того, как соберётся даже 1/20 базы.
-// При параллельности 2 нагрузка на память и на herobloks.com ощутимо меньше,
-// а сама сборка просто идёт дольше.
+const CONCURRENCY = 2; // на маленьком тарифе Railway обход всей базы при
+// параллельности 6 упирался в лимит памяти контейнера и ронял весь процесс.
 const CHECKPOINT_EVERY = 100; // сохранять прогресс на диск каждые N фигурок
-const MAX_TOP = 15;
+const TOP_N = 20;
+const MAX_YEAR = 2020; // фигурки позже — сознательно не учитываем (см. выше)
 
 let building = false;
-let cache = loadJson(CACHE_FILE);
 
-function loadJson(file) {
+function ensureArchiveDir() {
+  try { fs.mkdirSync(ARCHIVE_DIR, { recursive: true }); } catch (e) {}
+}
+
+function monthKey(date) {
+  const d = date || new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  return `${y}-${m}`;
+}
+
+function archiveFilePath(key) {
+  return path.join(ARCHIVE_DIR, `${key}.json`);
+}
+
+// Список всех месяцев, за которые уже есть готовый архив (по возрастанию —
+// "2026-06", "2026-07", ...).
+function listArchiveKeys() {
+  ensureArchiveDir();
   try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
+    return fs.readdirSync(ARCHIVE_DIR)
+      .filter(f => /^\d{4}-\d{2}\.json$/.test(f))
+      .map(f => f.replace(/\.json$/, ""))
+      .sort();
+  } catch (e) {
+    return [];
+  }
+}
+
+function hasArchive(key) {
+  return fs.existsSync(archiveFilePath(key));
+}
+
+function readArchive(key) {
+  try {
+    return JSON.parse(fs.readFileSync(archiveFilePath(key), "utf8"));
   } catch (e) {
     return null;
   }
 }
 
-function saveJson(file, data) {
-  try {
-    fs.writeFileSync(file, JSON.stringify(data), "utf8");
-  } catch (e) {
-    console.error(`analytics: не удалось сохранить ${path.basename(file)} на диск:`, e.message);
-  }
+// Самый свежий готовый архив — то, что показывается на главном экране
+// мини-приложения прямо сейчас.
+function getLatestArchive() {
+  const keys = listArchiveKeys();
+  if (keys.length === 0) return null;
+  return readArchive(keys[keys.length - 1]);
 }
 
 function getCached() {
-  return cache;
+  return getLatestArchive();
 }
 
 function isBuilding() {
   return building;
 }
 
-// Держит только MAX_TOP лучших элементов по cmp — не нужно хранить в памяти
-// весь список фигурок, чтобы в конце найти топ-15.
+function loadCheckpoint(key) {
+  try {
+    const cp = JSON.parse(fs.readFileSync(CHECKPOINT_FILE, "utf8"));
+    if (cp && cp.month === key && Number.isFinite(cp.total)) return cp;
+  } catch (e) {}
+  return null;
+}
+
+function saveCheckpoint(cp) {
+  try {
+    fs.writeFileSync(CHECKPOINT_FILE, JSON.stringify(cp), "utf8");
+  } catch (e) {
+    console.error("analytics: не удалось сохранить чекпоинт на диск:", e.message);
+  }
+}
+
+// Держит только TOP_N лучших элементов по cmp — не нужно хранить в памяти
+// весь список фигурок (~6500 штук), чтобы в конце найти топ-20.
 function insertTop(list, item, cmp) {
   list.push(item);
   list.sort(cmp);
-  if (list.length > MAX_TOP) list.length = MAX_TOP;
+  if (list.length > TOP_N) list.length = TOP_N;
 }
 
 /**
- * Обходит всю базу фигурок и пересчитывает статистику. onProgress(done, total)
+ * Обходит всю базу фигурок и собирает архив статистики за месяц targetKey
+ * (по умолчанию — текущий календарный месяц). onProgress(done, total)
  * вызывается время от времени, чтобы можно было показать прогресс (например
- * в чате бота). Возвращает готовый объект статистики (и заодно сохраняет его
- * в кэш и на диск). Если предыдущий запуск был прерван (падение процесса),
- * продолжает с сохранённого чекпоинта, а не с начала.
+ * в чате бота). Если предыдущая попытка за этот же месяц была прервана
+ * (падение процесса) — продолжает с сохранённого чекпоинта, а не с начала.
  */
-async function buildAnalytics(onProgress) {
-  if (building) return cache;
+async function buildAnalytics(onProgress, targetKey) {
+  if (building) return getLatestArchive();
   building = true;
+  const key = targetKey || monthKey();
   try {
+    ensureArchiveDir();
     const list = herobloks.getAllFigures(); // [{href, brand, serial, name}]
 
-    let checkpoint = loadJson(CHECKPOINT_FILE);
+    let checkpoint = loadCheckpoint(key);
     if (!checkpoint || checkpoint.total !== list.length) {
-      checkpoint = { cursor: 0, total: list.length, mostOwned: [], rare: [], yearCounts: {} };
+      checkpoint = { month: key, cursor: 0, total: list.length, topOwners: [], yearCounts: {} };
     }
 
     let cursor = checkpoint.cursor;
-    const mostOwned = checkpoint.mostOwned;
-    const rare = checkpoint.rare;
+    const topOwners = checkpoint.topOwners;
     const yearCounts = checkpoint.yearCounts;
 
     if (onProgress && cursor > 0) onProgress(cursor, list.length);
@@ -110,22 +157,23 @@ async function buildAnalytics(onProgress) {
       await Promise.all(batch.map(async item => {
         try {
           const details = await herobloks.fetchFigureDetails(item.href);
-          const year = details.year ? parseInt(details.year, 10) : null;
+          const yearRaw = details.year ? parseInt(details.year, 10) : null;
+          const year = Number.isFinite(yearRaw) ? yearRaw : null;
+          // Без года или позже MAX_YEAR — сознательно не учитываем.
+          if (year === null || year > MAX_YEAR) return;
           const owners = typeof details.owners === "number" ? details.owners : 0;
-          const rec = {
-            href: item.href,
-            name: details.name || item.name,
-            brand: details.brand || item.brand,
-            serial: details.serial || item.serial,
-            year: Number.isFinite(year) ? year : null,
-            owners,
-            imageUrl: details.imageUrl || null
-          };
           if (owners > 0) {
-            insertTop(mostOwned, rec, (a, b) => b.owners - a.owners);
-            insertTop(rare, rec, (a, b) => a.owners - b.owners);
+            insertTop(topOwners, {
+              href: item.href,
+              name: details.name || item.name,
+              brand: details.brand || item.brand,
+              serial: details.serial || item.serial,
+              year,
+              owners,
+              imageUrl: details.imageUrl || null
+            }, (a, b) => b.owners - a.owners);
           }
-          if (rec.year) yearCounts[rec.year] = (yearCounts[rec.year] || 0) + 1;
+          yearCounts[year] = (yearCounts[year] || 0) + 1;
         } catch (e) {
           // Пропускаем — одна неудачная фигурка не должна ронять весь обход.
         }
@@ -134,7 +182,7 @@ async function buildAnalytics(onProgress) {
       cursor = batchEnd;
 
       if (cursor % CHECKPOINT_EVERY < CONCURRENCY || cursor === list.length) {
-        saveJson(CHECKPOINT_FILE, { cursor, total: list.length, mostOwned, rare, yearCounts });
+        saveCheckpoint({ month: key, cursor, total: list.length, topOwners, yearCounts });
       }
       if (onProgress && (cursor % 250 < CONCURRENCY || cursor === list.length)) {
         onProgress(cursor, list.length);
@@ -146,14 +194,13 @@ async function buildAnalytics(onProgress) {
       .sort((a, b) => a.year - b.year);
 
     const data = {
+      month: key,
       builtAt: new Date().toISOString(),
       totalFigures: list.length,
-      mostOwned,
-      rare,
+      topOwners,
       byYear
     };
-    cache = data;
-    saveJson(CACHE_FILE, data);
+    fs.writeFileSync(archiveFilePath(key), JSON.stringify(data, null, 2), "utf8");
     try { fs.unlinkSync(CHECKPOINT_FILE); } catch (e) {}
     return data;
   } finally {
@@ -161,18 +208,28 @@ async function buildAnalytics(onProgress) {
   }
 }
 
-// При старте сервера — если статистики ещё нет или она давно не обновлялась,
-// запускаем пересчёт в фоне (не блокируя работу остального API). Сейчас этот
-// автозапуск отключён в index.js (см. комментарий там) — статистика считается
-// только вручную командой /rebuildstats.
-function maybeAutoBuild() {
-  const stale = !cache || (Date.now() - new Date(cache.builtAt).getTime() > REBUILD_AFTER_MS);
-  if (stale && !building) {
-    console.log("analytics: запускаю фоновый пересчёт статистики по фигуркам (может занять несколько минут)...");
-    buildAnalytics((done, total) => console.log(`analytics: обработано ${done}/${total}`))
-      .then(() => console.log("analytics: статистика готова"))
-      .catch(e => console.error("analytics: ошибка при сборе статистики:", e.message));
-  }
+// Если за текущий календарный месяц архива ещё нет — начинаем (или
+// продолжаем) его собирать в фоне. Специального планировщика "по первым
+// числам" нет: проверка идёт при каждом старте сервера, и как только
+// наступает новый месяц (а сервер так или иначе перезапускается — из-за
+// деплоев или иначе), она это заметит и запустит сборку заново уже за новый
+// месяц. Готовые архивы за прошлые месяцы никогда не трогаются и не
+// удаляются.
+function maybeAutoBuildMonthly() {
+  const key = monthKey();
+  if (hasArchive(key) || building) return;
+  console.log(`analytics: архива за ${key} ещё нет — запускаю (или продолжаю) сбор в фоне...`);
+  buildAnalytics((done, total) => console.log(`analytics: ${key}: обработано ${done}/${total}`), key)
+    .then(() => console.log(`analytics: архив за ${key} готов`))
+    .catch(e => console.error("analytics: ошибка при сборе статистики:", e.message));
 }
 
-module.exports = { getCached, isBuilding, buildAnalytics, maybeAutoBuild };
+module.exports = {
+  getCached,
+  isBuilding,
+  buildAnalytics,
+  maybeAutoBuildMonthly,
+  listArchiveKeys,
+  readArchive,
+  monthKey
+};
