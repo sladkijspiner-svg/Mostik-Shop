@@ -1,0 +1,706 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Найти фигурку — Mostik Shop</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  :root {
+    --bg: var(--tg-theme-bg-color, #15161d);
+    --text: var(--tg-theme-text-color, #f2f2f5);
+    --hint: var(--tg-theme-hint-color, #8a8d99);
+    --link: var(--tg-theme-link-color, #7aa2ff);
+    --button: var(--tg-theme-button-color, #a41f1f);
+    --button-text: var(--tg-theme-button-text-color, #ffffff);
+    --card-bg: rgba(255,255,255,0.06);
+    --card-border: rgba(255,255,255,0.10);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 12px;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0; }
+  .header-row { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 12px; gap: 8px; }
+  .wish-badge {
+    border: 1px solid var(--card-border); background: var(--card-bg); color: var(--text);
+    border-radius: 999px; padding: 6px 12px; font-size: 14px; cursor: pointer; flex-shrink: 0;
+  }
+  .search-row { display: flex; gap: 8px; margin-bottom: 14px; }
+  #q {
+    flex: 1;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--card-border);
+    background: var(--card-bg);
+    color: var(--text);
+    font-size: 16px;
+  }
+  #q::placeholder { color: var(--hint); }
+  .hint { color: var(--hint); font-size: 13px; margin-bottom: 14px; }
+  .crumbs { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .crumbs button {
+    background: none; border: none; color: var(--link); font-size: 14px;
+    padding: 4px 0; cursor: pointer;
+  }
+  .group-list, .item-grid { display: flex; flex-direction: column; gap: 8px; }
+
+  /* --- строка образа (список группировок) --- */
+  .group-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px 8px 8px; border-radius: 12px;
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    cursor: pointer;
+  }
+  .group-thumbs { display: flex; align-items: center; flex-shrink: 0; width: 40px; height: 32px; position: relative; }
+  .group-thumbs .gth {
+    width: 32px; height: 32px; border-radius: 8px; overflow: hidden;
+    background: rgba(255,255,255,0.04); border: 1px solid var(--card-border);
+    position: absolute; top: 0; display: flex; align-items: center; justify-content: center;
+  }
+  .group-thumbs .gth:nth-child(1) { left: 0; z-index: 2; }
+  .group-thumbs .gth:nth-child(2) { left: 14px; z-index: 1; }
+  .group-thumbs .gth img { width: 100%; height: 100%; object-fit: cover; }
+  .group-row .gname { flex: 1; font-size: 14px; }
+  .group-row .count { color: var(--hint); font-size: 13px; flex-shrink: 0; }
+
+  /* --- сетка конкретных артикулов --- */
+  .item-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .item-card {
+    border-radius: 12px; background: var(--card-bg); border: 1px solid var(--card-border);
+    overflow: hidden; cursor: pointer; display: flex; flex-direction: column;
+  }
+  .item-card .thumb {
+    width: 100%; aspect-ratio: 1/1; background: rgba(255,255,255,0.04);
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .item-card .thumb img { width: 100%; height: 100%; object-fit: cover; }
+  .spinner {
+    width: 20px; height: 20px; border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.15); border-top-color: var(--link);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .item-card .label { padding: 8px 10px; font-size: 13px; line-height: 1.3; }
+  .item-card .label b { display: block; font-size: 13px; }
+  .item-card .label span { color: var(--hint); font-size: 12px; }
+  .empty { color: var(--hint); padding: 30px 0; text-align: center; }
+  .suggest-list { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .suggest-chip {
+    border: 1px solid var(--card-border); background: var(--card-bg); color: var(--link);
+    border-radius: 999px; padding: 8px 14px; font-size: 14px; cursor: pointer;
+  }
+  .loading { color: var(--hint); padding: 30px 0; text-align: center; display: flex; align-items: center; justify-content: center; gap: 8px; }
+
+  /* --- карточка с полной информацией о фигурке --- */
+  .detail-gallery { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+  .detail-gallery img {
+    width: 100%; max-height: 46vh; object-fit: contain;
+    border-radius: 14px; border: 1px solid var(--card-border);
+    background: #fff;
+  }
+  .detail-info {
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    border-radius: 14px; padding: 14px 16px;
+  }
+  .detail-info h2 { margin: 0 0 8px; font-size: 17px; }
+  .detail-info .row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 14px; border-top: 1px solid var(--card-border); }
+  .detail-info .row:first-of-type { border-top: none; }
+  .detail-info .row .k { color: var(--hint); }
+
+  /* --- «Проверить наличие на:» --- */
+  .marketplace-block { margin-top: 14px; }
+  .marketplace-block .mp-label { color: var(--hint); font-size: 13px; margin-bottom: 8px; }
+  .mp-buttons { display: flex; gap: 8px; }
+  .mp-btn {
+    flex: 1; border: none; border-radius: 12px; padding: 12px 8px;
+    font-size: 14px; font-weight: 600; color: #fff; cursor: pointer;
+  }
+  .mp-btn.ozon { background: #005bff; }
+  .mp-btn.wb { background: #cb11ab; }
+  .mp-btn.ali { background: #ff4747; }
+
+  /* --- вишлист --- */
+  .wish-toggle {
+    display: block; width: 100%; margin-top: 12px; padding: 12px;
+    border-radius: 12px; border: 1px solid var(--card-border);
+    background: var(--card-bg); color: var(--text); font-size: 14px; font-weight: 600;
+    cursor: pointer;
+  }
+  .wish-toggle.active { background: var(--button); color: var(--button-text); border-color: var(--button); }
+  .wish-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 10px 12px 14px; border-radius: 12px;
+    background: var(--card-bg); border: 1px solid var(--card-border);
+    cursor: pointer;
+  }
+  .wish-row .wname { flex: 1; font-size: 14px; }
+  .wish-row .wname span { display: block; color: var(--hint); font-size: 12px; margin-top: 2px; }
+  .wish-row .wremove {
+    border: none; background: none; color: var(--hint); font-size: 18px; line-height: 1;
+    padding: 4px 6px; cursor: pointer; flex-shrink: 0;
+  }
+  .wish-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+  .wish-actions button {
+    border: none; border-radius: 12px; padding: 12px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .wish-send { background: var(--button); color: var(--button-text); }
+  .wish-clear { background: var(--card-bg); color: var(--hint); border: 1px solid var(--card-border) !important; }
+</style>
+</head>
+<body>
+
+<div class="header-row">
+  <h1>🔍 Найти фигурку</h1>
+  <button id="wishBtn" class="wish-badge">🖤 <span id="wishCount">0</span></button>
+</div>
+<div class="search-row">
+  <input id="q" type="text" placeholder="Артикул (PG-206) или имя (Wolverine)" autocomplete="off">
+</div>
+<div class="hint" id="hint">Начните вводить артикул или имя персонажа — и по-русски тоже можно.</div>
+
+<div id="crumbs" class="crumbs" style="display:none">
+  <button id="backBtn">← Назад</button>
+</div>
+
+<div id="content"></div>
+
+<!-- Скрипт Telegram подключаем в самом конце — если он грузится медленно, это
+     больше не задерживает показ самой страницы (поиска и заголовка). -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) { tg.ready(); tg.expand(); }
+
+  const qInput = document.getElementById("q");
+  const contentEl = document.getElementById("content");
+  const crumbsEl = document.getElementById("crumbs");
+  const backBtn = document.getElementById("backBtn");
+  const wishBtn = document.getElementById("wishBtn");
+  const wishCountEl = document.getElementById("wishCount");
+
+  function debounce(fn, ms) {
+    let t;
+    return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+  }
+
+  function showBack(fn) {
+    if (fn) {
+      crumbsEl.style.display = "flex";
+      backBtn.onclick = fn;
+    } else {
+      crumbsEl.style.display = "none";
+      backBtn.onclick = null;
+    }
+  }
+
+  // Возврат «в начало» — используется там, где до карточки/списка не было
+  // предыдущего экрана (например прямое совпадение по артикулу): просто
+  // очищает поле поиска и результаты.
+  function resetSearch() {
+    qInput.value = "";
+    contentEl.innerHTML = "";
+    showBack(null);
+    qInput.focus();
+  }
+
+  async function doSearch(q) {
+    if (!q || q.trim().length < 2) {
+      contentEl.innerHTML = "";
+      showBack(null);
+      return;
+    }
+    contentEl.innerHTML = '<div class="loading"><div class="spinner"></div>Ищу…</div>';
+    showBack(null);
+
+    let data;
+    try {
+      const res = await fetch("/api/herobloks/search?q=" + encodeURIComponent(q));
+      data = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<div class="empty">Не получилось выполнить поиск. Попробуйте ещё раз.</div>';
+      return;
+    }
+
+    // Прямое совпадение по артикулу.
+    if (data.codeMatches && data.codeMatches.length > 0) {
+      const items = data.codeMatches.map(m => ({ href: m.href, brand: m.brand, serial: m.serial, label: (m.brand || "") + " " + (m.serial || "") }));
+      if (items.length === 1) {
+        showDetail(items[0], resetSearch);
+      } else {
+        renderItemGrid(items, resetSearch);
+      }
+      return;
+    }
+
+    const groups = data.groups || [];
+    if (groups.length === 0) {
+      renderEmptyWithSuggestions(data.suggestions || []);
+      return;
+    }
+
+    if (groups.length === 1) {
+      if (groups[0].items.length === 1) {
+        showDetail(groups[0].items[0], resetSearch);
+      } else {
+        renderItemGrid(groups[0].items, resetSearch);
+      }
+      return;
+    }
+
+    renderGroupList(groups);
+  }
+
+  // Ничего не нашлось — если похоже на опечатку, предлагаем варианты
+  // «Возможно, вы имели в виду?», по клику на которые запускаем поиск заново.
+  function renderEmptyWithSuggestions(suggestions) {
+    if (!suggestions || suggestions.length === 0) {
+      contentEl.innerHTML = '<div class="empty">Ничего не нашлось. Попробуйте другой запрос.</div>';
+      return;
+    }
+    const wrap = document.createElement("div");
+    wrap.innerHTML = `
+      <div class="empty" style="padding-bottom:10px">Ничего не нашлось. Возможно, вы имели в виду:</div>
+      <div class="suggest-list"></div>
+    `;
+    const list = wrap.querySelector(".suggest-list");
+    suggestions.forEach(s => {
+      const chip = document.createElement("button");
+      chip.className = "suggest-chip";
+      chip.textContent = s.label;
+      chip.addEventListener("click", () => {
+        qInput.value = s.query;
+        doSearch(s.query);
+      });
+      list.appendChild(chip);
+    });
+    contentEl.innerHTML = "";
+    contentEl.appendChild(wrap);
+  }
+
+  function renderGroupList(groups) {
+    showBack(null);
+    const wrap = document.createElement("div");
+    wrap.className = "group-list";
+    groups.forEach(g => {
+      const row = document.createElement("div");
+      row.className = "group-row";
+      const thumbCount = g.items.length > 1 ? 2 : 1;
+      let thumbsHtml = "";
+      for (let i = 0; i < thumbCount; i++) {
+        thumbsHtml += `<div class="gth" data-i="${i}"><div class="spinner" style="width:14px;height:14px;border-width:2px"></div></div>`;
+      }
+      row.innerHTML = `
+        <div class="group-thumbs">${thumbsHtml}</div>
+        <span class="gname">${escapeHtml(g.name)}</span>
+        <span class="count">${g.items.length}</span>
+      `;
+      row.addEventListener("click", () => {
+        if (g.items.length === 1) {
+          showDetail(g.items[0], () => renderGroupList(groups));
+        } else {
+          renderItemGrid(g.items, () => renderGroupList(groups));
+        }
+      });
+      wrap.appendChild(row);
+    });
+    contentEl.innerHTML = "";
+    contentEl.appendChild(wrap);
+
+    loadGroupThumbnails(groups, wrap);
+  }
+
+  async function loadGroupThumbnails(groups, wrap) {
+    // По 1-2 представительных фото на каждый образ (не больше 30 запросов за раз).
+    const jobs = []; // { href, rowIndex, slot }
+    groups.forEach((g, gi) => {
+      const n = g.items.length > 1 ? 2 : 1;
+      for (let i = 0; i < n; i++) {
+        if (g.items[i]) jobs.push({ href: g.items[i].href, rowIndex: gi, slot: i });
+      }
+    });
+    const limited = jobs.slice(0, 30);
+    const rows = wrap.querySelectorAll(".group-row");
+
+    // Слоты сверх лимита в 30 запросов — просто убираем спиннер, чтобы не крутился без толку.
+    jobs.slice(30).forEach(job => {
+      const row = rows[job.rowIndex];
+      const slotEl = row && row.querySelectorAll(".gth")[job.slot];
+      if (slotEl) slotEl.innerHTML = "";
+    });
+
+    if (limited.length === 0) return;
+    try {
+      const res = await fetch("/api/herobloks/thumbnails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hrefs: limited.map(j => j.href) })
+      });
+      const data = await res.json();
+      const byHref = {};
+      (data.items || []).forEach(x => { byHref[x.href] = x; });
+      limited.forEach(job => {
+        const row = rows[job.rowIndex];
+        if (!row) return;
+        const slotEl = row.querySelectorAll(".gth")[job.slot];
+        if (!slotEl) return;
+        const info = byHref[job.href];
+        slotEl.innerHTML = (info && info.imageUrl) ? `<img src="${info.imageUrl}" loading="lazy">` : "";
+      });
+    } catch (e) {
+      wrap.querySelectorAll(".gth").forEach(el => { el.innerHTML = ""; });
+    }
+  }
+
+  function renderItemGrid(items, backFn) {
+    showBack(backFn || null);
+
+    const grid = document.createElement("div");
+    grid.className = "item-grid";
+    items.forEach(item => {
+      const card = document.createElement("div");
+      card.className = "item-card";
+      card.innerHTML = `
+        <div class="thumb"><div class="spinner"></div></div>
+        <div class="label"><b>${escapeHtml(item.brand || "")}</b><span>${escapeHtml(item.serial || "")}</span></div>
+      `;
+      card.addEventListener("click", () => showDetail(item, () => renderItemGrid(items, backFn)));
+      grid.appendChild(card);
+    });
+    contentEl.innerHTML = "";
+    contentEl.appendChild(grid);
+
+    loadThumbnails(items, grid);
+  }
+
+  async function loadThumbnails(items, grid) {
+    const hrefs = items.map(i => i.href);
+    try {
+      const res = await fetch("/api/herobloks/thumbnails", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hrefs })
+      });
+      const data = await res.json();
+      const byHref = {};
+      (data.items || []).forEach(x => { byHref[x.href] = x; });
+      const cards = grid.querySelectorAll(".item-card");
+      cards.forEach((card, i) => {
+        const info = byHref[hrefs[i]];
+        const thumb = card.querySelector(".thumb");
+        if (info && info.imageUrl) {
+          thumb.innerHTML = `<img src="${info.imageUrl}" loading="lazy">`;
+        } else {
+          thumb.innerHTML = `<span style="font-size:11px;color:var(--hint)">нет фото</span>`;
+        }
+      });
+    } catch (e) {
+      // тихо — карточки просто останутся без фото
+    }
+  }
+
+  // Показывает полную карточку фигурки прямо внутри приложения: все фото
+  // галереей и всю информацию (название, бренд, артикул, год, тема) — без
+  // перехода на herobloks.com.
+  async function showDetail(item, backFn) {
+    showBack(backFn);
+    contentEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загружаю…</div>';
+
+    let details;
+    try {
+      const res = await fetch("/api/herobloks/details?href=" + encodeURIComponent(item.href));
+      details = await res.json();
+    } catch (e) {
+      contentEl.innerHTML = '<div class="empty">Не получилось загрузить информацию. Попробуйте ещё раз.</div>';
+      return;
+    }
+
+    if (!details || details.error) {
+      contentEl.innerHTML = '<div class="empty">Не получилось загрузить информацию. Попробуйте ещё раз.</div>';
+      return;
+    }
+
+    const photos = (details.imageUrls && details.imageUrls.length) ? details.imageUrls : (details.imageUrl ? [details.imageUrl] : []);
+
+    const gallery = document.createElement("div");
+    gallery.className = "detail-gallery";
+    if (photos.length > 0) {
+      photos.forEach(url => {
+        const img = document.createElement("img");
+        img.src = url;
+        img.loading = "lazy";
+        gallery.appendChild(img);
+      });
+    }
+
+    const info = document.createElement("div");
+    info.className = "detail-info";
+    const rows = [];
+    rows.push(["Бренд", details.brand]);
+    rows.push(["Артикул", details.serial]);
+    rows.push(["Год", details.year]);
+    rows.push(["Тема", details.theme]);
+    info.innerHTML = `
+      <h2>${escapeHtml(details.name || details.basename || "Фигурка")}</h2>
+      ${rows.filter(r => r[1]).map(r => `<div class="row"><span class="k">${r[0]}</span><span>${escapeHtml(r[1])}</span></div>`).join("")}
+    `;
+
+    contentEl.innerHTML = "";
+    contentEl.appendChild(gallery);
+    contentEl.appendChild(info);
+    contentEl.appendChild(buildWishToggle({
+      href: item.href,
+      name: details.name || details.basename || "Фигурка",
+      brand: details.brand,
+      serial: details.serial
+    }));
+
+    if (details.marketplaceCode) {
+      contentEl.appendChild(buildMarketplaceBlock(details.marketplaceCode));
+    }
+  }
+
+  // Блок «Проверить наличие на: Озон / ВБ / Алик» — открывает поиск по
+  // артикулу этой фигурки на соответствующем маркетплейсе.
+  function buildMarketplaceBlock(code) {
+    const q = encodeURIComponent(code);
+    const links = [
+      { cls: "ozon", label: "Озон", url: `https://www.ozon.ru/search/?text=${q}` },
+      { cls: "wb", label: "ВБ", url: `https://www.wildberries.ru/catalog/0/search.aspx?search=${q}` },
+      { cls: "ali", label: "Алик", url: `https://aliexpress.ru/wholesale?SearchText=${q}` }
+    ];
+    const block = document.createElement("div");
+    block.className = "marketplace-block";
+    block.innerHTML = `
+      <div class="mp-label">Проверить наличие на:</div>
+      <div class="mp-buttons">
+        ${links.map(l => `<button class="mp-btn ${l.cls}" data-url="${escapeHtml(l.url)}">${l.label}</button>`).join("")}
+      </div>
+    `;
+    block.querySelectorAll(".mp-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        const url = btn.getAttribute("data-url");
+        if (tg && tg.openLink) {
+          tg.openLink(url);
+        } else {
+          window.open(url, "_blank");
+        }
+      });
+    });
+    return block;
+  }
+
+  // ---- Вишлист ----
+  // Понравившиеся фигурки покупатель отмечает сердечком, а потом одной
+  // кнопкой отправляет весь список администратору (боту), чтобы тот
+  // поискал их в продаже. Список хранится на сервере по Telegram id.
+
+  let wishlistCache = [];
+  let wishlistIds = new Set();
+
+  let cachedTgUser = null;
+
+  function getTgUser() {
+    if (cachedTgUser) return cachedTgUser;
+    if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
+      cachedTgUser = tg.initDataUnsafe.user;
+      return cachedTgUser;
+    }
+    // На некоторых клиентах Telegram initDataUnsafe.user не заполняется,
+    // хотя сырая строка initData данные всё равно содержит — разбираем её
+    // вручную как запасной вариант.
+    if (tg && tg.initData) {
+      try {
+        const params = new URLSearchParams(tg.initData);
+        const userStr = params.get("user");
+        if (userStr) {
+          cachedTgUser = JSON.parse(userStr);
+          return cachedTgUser;
+        }
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  function notify(text) {
+    if (tg && tg.showAlert) tg.showAlert(text);
+    else alert(text);
+  }
+
+  function updateWishBadge() {
+    wishCountEl.textContent = wishlistCache.length;
+  }
+
+  async function loadWishlist() {
+    const user = getTgUser();
+    if (!user) return;
+    try {
+      const res = await fetch("/api/wishlist?userId=" + encodeURIComponent(user.id));
+      const data = await res.json();
+      wishlistCache = data.items || [];
+      wishlistIds = new Set(wishlistCache.map(i => i.href));
+      updateWishBadge();
+    } catch (e) {
+      // тихо — бейдж просто останется как был
+    }
+  }
+
+  async function addToWishlist(item) {
+    const user = getTgUser();
+    if (!user) { notify("Вишлист доступен только внутри Telegram."); return false; }
+    try {
+      const res = await fetch("/api/wishlist/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, href: item.href, name: item.name, brand: item.brand, serial: item.serial })
+      });
+      const data = await res.json();
+      wishlistCache = data.items || wishlistCache;
+      wishlistIds.add(item.href);
+      updateWishBadge();
+      return true;
+    } catch (e) {
+      notify("Не получилось добавить в вишлист. Попробуйте ещё раз.");
+      return false;
+    }
+  }
+
+  async function removeFromWishlist(href) {
+    const user = getTgUser();
+    if (!user) return false;
+    try {
+      const res = await fetch("/api/wishlist/remove", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: user.id, href })
+      });
+      const data = await res.json();
+      wishlistCache = data.items || wishlistCache.filter(i => i.href !== href);
+      wishlistIds.delete(href);
+      updateWishBadge();
+      return true;
+    } catch (e) {
+      notify("Не получилось убрать из вишлиста. Попробуйте ещё раз.");
+      return false;
+    }
+  }
+
+  // Кнопка-сердечко под карточкой фигурки — переключает "в вишлисте / нет".
+  function buildWishToggle(item) {
+    const btn = document.createElement("button");
+    btn.className = "wish-toggle";
+    const paint = () => {
+      const inList = wishlistIds.has(item.href);
+      btn.classList.toggle("active", inList);
+      btn.textContent = inList ? "❤️ В вишлисте — нажмите, чтобы убрать" : "🤍 Добавить в вишлист";
+    };
+    paint();
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      if (wishlistIds.has(item.href)) {
+        await removeFromWishlist(item.href);
+      } else {
+        await addToWishlist(item);
+      }
+      btn.disabled = false;
+      paint();
+    });
+    return btn;
+  }
+
+  // Экран «Мой вишлист»: список отмеченных фигурок, у каждой можно перейти
+  // к карточке или убрать крестиком, плюс кнопки отправить/очистить.
+  function renderWishlistView() {
+    showBack(resetSearch);
+    qInput.value = "";
+
+    if (!getTgUser()) {
+      contentEl.innerHTML = '<div class="empty">Вишлист доступен только внутри Telegram.</div>';
+      return;
+    }
+
+    if (wishlistCache.length === 0) {
+      contentEl.innerHTML = '<div class="empty">Вишлист пуст. Найдите фигурку и нажмите «🤍 Добавить в вишлист».</div>';
+      return;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "group-list";
+    wishlistCache.forEach(item => {
+      const row = document.createElement("div");
+      row.className = "wish-row";
+      const brandSerial = `${item.brand || ""} ${item.serial || ""}`.trim();
+      row.innerHTML = `
+        <div class="wname">${escapeHtml(item.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}</div>
+        <button class="wremove" title="Убрать">✕</button>
+      `;
+      row.querySelector(".wname").addEventListener("click", () => {
+        showDetail({ href: item.href, brand: item.brand, serial: item.serial }, renderWishlistView);
+      });
+      row.querySelector(".wremove").addEventListener("click", async e => {
+        e.stopPropagation();
+        await removeFromWishlist(item.href);
+        renderWishlistView();
+      });
+      wrap.appendChild(row);
+    });
+
+    const actions = document.createElement("div");
+    actions.className = "wish-actions";
+    actions.innerHTML = `
+      <button class="wish-send">📩 Отправить админу</button>
+      <button class="wish-clear">🗑 Очистить вишлист</button>
+    `;
+    actions.querySelector(".wish-send").addEventListener("click", async () => {
+      const user = getTgUser();
+      try {
+        const res = await fetch("/api/wishlist/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id, username: user.username, firstName: user.first_name })
+        });
+        const data = await res.json();
+        if (data.ok) notify("Вишлист отправлен администратору ✅");
+        else if (data.reason === "no_admin") notify("Не настроен администратор магазина — некому отправить.");
+        else notify("Не получилось отправить. Попробуйте ещё раз.");
+      } catch (e) {
+        notify("Не получилось отправить. Попробуйте ещё раз.");
+      }
+    });
+    actions.querySelector(".wish-clear").addEventListener("click", async () => {
+      const user = getTgUser();
+      try {
+        await fetch("/api/wishlist/clear", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userId: user.id })
+        });
+        wishlistCache = [];
+        wishlistIds = new Set();
+        updateWishBadge();
+        renderWishlistView();
+      } catch (e) {
+        notify("Не получилось очистить вишлист. Попробуйте ещё раз.");
+      }
+    });
+
+    contentEl.innerHTML = "";
+    contentEl.appendChild(wrap);
+    contentEl.appendChild(actions);
+  }
+
+  wishBtn.addEventListener("click", renderWishlistView);
+  loadWishlist();
+
+  function escapeHtml(s) {
+    return String(s || "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  qInput.addEventListener("input", debounce(e => doSearch(e.target.value), 400));
+</script>
+</body>
+</html>
