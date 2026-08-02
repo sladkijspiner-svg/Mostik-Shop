@@ -49,7 +49,12 @@ app.get("/api/herobloks/search", (req, res) => {
     items: g.items.map(it => ({ href: it.href, brand: it.brand, serial: it.serial, label: it.label }))
   }));
 
-  res.json({ codeMatches, groups });
+  // Если совсем ничего не нашлось — пробуем угадать опечатку и подсказать.
+  const suggestions = (codeMatches.length === 0 && groups.length === 0)
+    ? herobloks.suggestNames(q)
+    : [];
+
+  res.json({ codeMatches, groups, suggestions });
 });
 
 // Забирает фото+название для набора конкретных фигурок (по ссылкам) —

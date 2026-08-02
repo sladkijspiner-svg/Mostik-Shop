@@ -119,10 +119,17 @@ function findFigureMatches(rawMessage) {
 // сработает, если написать по-английски или транслитом.
 const RU_NAME_HINTS = {
   "росомаха": "wolverine",
-  "человек паук": "spider-man",
-  "человек-паук": "spider-man",
-  "паук": "spider-man",
+  "вулверин": "wolverine",
+  "волверин": "wolverine",
+  "человек паук": "spider man",
+  "человек-паук": "spider man",
+  "паук": "spider man",
+  "спайдермен": "spider man",
+  "спайдер-мен": "spider man",
+  "спайдер мен": "spider man",
   "железный человек": "iron man",
+  "айронмен": "iron man",
+  "айрон мен": "iron man",
   "тор": "thor",
   "халк": "hulk",
   "капитан америка": "captain america",
@@ -138,12 +145,15 @@ const RU_NAME_HINTS = {
   "алая ведьма": "scarlet witch",
   "ванда": "scarlet witch",
   "соколиный глаз": "hawkeye",
+  "хоукай": "hawkeye",
+  "зимний солдат": "winter soldier",
+  "уинтер солдат": "winter soldier",
   "черная вдова": "black widow",
   "чёрная вдова": "black widow",
   "грут": "groot",
   "ракета": "rocket",
-  "звёздный лорд": "star-lord",
-  "звездный лорд": "star-lord",
+  "звёздный лорд": "star lord",
+  "звездный лорд": "star lord",
   "гамора": "gamora",
   "ник фьюри": "nick fury",
   "мстители": "avengers",
@@ -164,21 +174,26 @@ const RU_NAME_HINTS = {
   "женщина невидимка": "invisible woman",
   "квиксильвер": "quicksilver",
   "ртуть": "quicksilver",
-  "человек муравей": "ant-man",
-  "человек-муравей": "ant-man",
+  "человек муравей": "ant man",
+  "человек-муравей": "ant man",
   "оса": "wasp",
   "капитан марвел": "captain marvel",
   "мисс марвел": "ms marvel",
   "сорвиголова": "daredevil",
   "электра": "elektra",
   "джокер": "joker",
-  "халк оборотень": "she-hulk",
-  "женщина халк": "she-hulk"
+  "халк оборотень": "she hulk",
+  "женщина халк": "she hulk"
 };
+
+// Ключи сортируем от самых длинных к самым коротким — иначе, например,
+// короткое "халк" заменится раньше составного "халк оборотень" и испортит
+// более специфичное совпадение.
+const RU_NAME_HINT_KEYS = Object.keys(RU_NAME_HINTS).sort((a, b) => b.length - a.length);
 
 function translateQueryHints(lower) {
   let out = lower;
-  for (const ru of Object.keys(RU_NAME_HINTS)) {
+  for (const ru of RU_NAME_HINT_KEYS) {
     if (out.includes(ru)) {
       out = out.split(ru).join(RU_NAME_HINTS[ru]);
     }
@@ -305,6 +320,92 @@ function findFigureByName(rawQuery, limit) {
   return matches.slice(0, limit || 300);
 }
 
+// Расстояние Левенштейна — сколько правок (замена/вставка/удаление буквы)
+// отделяет одну строку от другой. Используется для подсказок "Возможно, вы
+// имели в виду?", когда точных совпадений не нашлось.
+function levenshtein(a, b) {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  let curr = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+// Пул кандидатов для подсказок: уникальные "канонические" названия образов
+// персонажей (на английском, как на herobloks.com) плюс все русские слова
+// из словаря RU_NAME_HINTS — чтобы можно было подсказать исправление и для
+// опечатки в английском написании, и для опечатки в русском.
+let SUGGEST_POOL = null; // [{ label, query, lower }]
+function buildSuggestPool() {
+  if (SUGGEST_POOL) return SUGGEST_POOL;
+  const seen = new Set();
+  const pool = [];
+  for (const item of buildNameList()) {
+    const canonical = canonicalizeName(item.name);
+    const lower = canonical.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    pool.push({ label: canonical, query: canonical, lower });
+  }
+  for (const ru of Object.keys(RU_NAME_HINTS)) {
+    const lower = ru.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    const label = ru.charAt(0).toUpperCase() + ru.slice(1);
+    pool.push({ label, query: ru, lower });
+  }
+  SUGGEST_POOL = pool;
+  return pool;
+}
+
+/**
+ * Подсказки "Возможно, вы имели в виду?" для случая, когда по запросу
+ * ничего не нашлось — вдруг это просто опечатка. Ищет ближайшие по
+ * написанию названия (расстояние Левенштейна) среди известных персонажей,
+ * не дальше разумного порога, и возвращает не больше `limit` штук,
+ * отсортированных от самого похожего.
+ */
+function suggestNames(rawQuery, limit) {
+  if (!rawQuery) return [];
+  const lower = rawQuery.toLowerCase().trim();
+  if (lower.length < 3) return [];
+
+  const pool = buildSuggestPool();
+  const scored = [];
+  for (const cand of pool) {
+    // Не сравниваем строки, длины которых слишком различаются — это почти
+    // наверняка не опечатка, а что-то совсем другое, и Левенштейн там будет
+    // большим просто из-за разницы в длине.
+    if (Math.abs(cand.lower.length - lower.length) > 4) continue;
+    const dist = levenshtein(lower, cand.lower);
+    const threshold = Math.max(2, Math.ceil(cand.lower.length * 0.34));
+    if (dist > 0 && dist <= threshold) {
+      scored.push({ label: cand.label, query: cand.query, dist });
+    }
+  }
+  scored.sort((a, b) => a.dist - b.dist);
+
+  const out = [];
+  const seenLabels = new Set();
+  for (const s of scored) {
+    if (seenLabels.has(s.label)) continue;
+    seenLabels.add(s.label);
+    out.push({ label: s.label, query: s.query });
+    if (out.length >= (limit || 4)) break;
+  }
+  return out;
+}
+
 /**
  * Группирует результаты поиска по образу/варианту персонажа — например у
  * "Wolverine" бывают отдельные образы "Ninja Strike Wolverine", "Venom
@@ -408,4 +509,4 @@ function marketplaceQuery(href, serial) {
   return (prefix + compact).toLowerCase();
 }
 
-module.exports = { findFigureMatches, findFigureByName, groupFiguresByName, fetchFigureDetails, compactCode, marketplaceQuery };
+module.exports = { findFigureMatches, findFigureByName, groupFiguresByName, fetchFigureDetails, compactCode, marketplaceQuery, suggestNames };

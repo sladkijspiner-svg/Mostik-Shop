@@ -38,6 +38,10 @@ const lastGroups = new Map();
 // артикулы разных производителей одного и того же образа).
 const lastResults = new Map();
 
+// chatId -> последний список подсказок "Возможно, вы имели в виду?" —
+// когда по запросу ничего не нашлось, но похоже на опечатку.
+const lastSuggestions = new Map();
+
 const FIND_BUTTON_TEXT = "🔍 Найти фигурку";
 const WEBAPP_BUTTON_TEXT = "🖼 Найти с картинками";
 const GROUP_PAGE_SIZE = 15;
@@ -216,6 +220,20 @@ bot.on("callback_query", async query => {
     return;
   }
 
+  // Выбор подсказки "Возможно, вы имели в виду?" — запускает поиск заново
+  // уже с исправленным вариантом.
+  if (data.startsWith("figsug:")) {
+    bot.answerCallbackQuery(query.id);
+    const idx = parseInt(data.slice("figsug:".length), 10);
+    const suggestions = lastSuggestions.get(chatId);
+    if (!suggestions || !suggestions[idx]) {
+      bot.sendMessage(chatId, "Эта подсказка уже устарела — начните поиск заново кнопкой «" + FIND_BUTTON_TEXT + "».");
+      return;
+    }
+    await runFigureSearch(chatId, suggestions[idx].query);
+    return;
+  }
+
   if (!isAdmin(query.from.id)) {
     bot.answerCallbackQuery(query.id);
     return denyAccess(chatId);
@@ -274,7 +292,7 @@ bot.on("message", async msg => {
   // Мы ждали от этого человека артикул/название после нажатия кнопки.
   if (findSessions.get(chatId)) {
     findSessions.delete(chatId);
-    await handleFindQuery(msg);
+    await runFigureSearch(chatId, msg.text.trim());
     return;
   }
 
@@ -312,10 +330,9 @@ async function handleFigureCodeLookup(msg) {
 // Поиск по названию — двухуровневый: сперва показываем список образов
 // («Wolverine», «Ninja Strike Wolverine», «Symbiote Wolverine» и т.п.),
 // а после выбора образа — список конкретных артикулов разных производителей.
-async function handleFindQuery(msg) {
-  const chatId = msg.chat.id;
-  const text = msg.text.trim();
-
+// Если совсем ничего не нашлось — пробует угадать опечатку и предлагает
+// варианты кнопками «Возможно, вы имели в виду?».
+async function runFigureSearch(chatId, text) {
   const codeMatches = herobloks.findFigureMatches(text);
   if (codeMatches.length > 0) {
     await sendFigures(chatId, codeMatches);
@@ -324,7 +341,14 @@ async function handleFindQuery(msg) {
 
   const nameMatches = herobloks.findFigureByName(text);
   if (nameMatches.length === 0) {
-    bot.sendMessage(chatId, "Ничего не нашлось. Попробуйте другой артикул или название (можно по-английски).");
+    const suggestions = herobloks.suggestNames(text);
+    if (suggestions.length > 0) {
+      lastSuggestions.set(chatId, suggestions);
+      const rows = suggestions.map((s, i) => [{ text: s.label, callback_data: "figsug:" + i }]);
+      bot.sendMessage(chatId, "Ничего не нашлось. Возможно, вы имели в виду:", { reply_markup: { inline_keyboard: rows } });
+    } else {
+      bot.sendMessage(chatId, "Ничего не нашлось. Попробуйте другой артикул или название (можно по-английски).");
+    }
     return;
   }
 
