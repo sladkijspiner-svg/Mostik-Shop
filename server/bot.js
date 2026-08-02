@@ -59,7 +59,7 @@ const GROUP_PAGE_SIZE = 15;
 // страницу мини-приложения у себя внутри (бывает, особенно в Desktop-версии):
 // новый номер версии заставляет считать это другим адресом и скачать страницу
 // заново. Увеличивайте v при каждом заметном изменении find-app.html.
-const WEBAPP_VERSION = process.env.WEBAPP_VERSION || "4";
+const WEBAPP_VERSION = process.env.WEBAPP_VERSION || "5";
 const WEBAPP_BASE_URL = (process.env.WEBAPP_URL || "https://mostik-shop-production.up.railway.app/find-app.html") + "?v=" + WEBAPP_VERSION;
 
 // На некоторых клиентах Telegram (замечено на Desktop-версии) мини-приложение
