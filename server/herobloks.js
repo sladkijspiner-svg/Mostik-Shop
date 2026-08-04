@@ -592,50 +592,46 @@ function getAllFigures() {
 
 // ---- Новинки Marvel за последнюю неделю ----
 //
-// Страница поиска herobloks.com по теме (theme=Marvel) по умолчанию
-// отсортирована "Recently Added" — сверху самые недавно добавленные на сайт
-// карточки. Поэтому не нужно обходить всю базу: читаем только первую
-// страницу списка (~25-30 карточек, с запасом хватает на неделю обычного
-// темпа добавлений), для каждой смотрим точную дату добавления ("Entry
-// created on ...", см. parseCreatedDate) и останавливаемся, как только
-// встречаем карточку старше нужного срока.
+// Страница поиска herobloks.com отрисовывается на JS (Vue) прямо в браузере —
+// обычным серверным fetch() (без выполнения JS) её содержимое не увидеть,
+// приходит пустая "рыба". Зато у сайта есть sitemap.xml — самый обычный XML,
+// без JS, со списком ВСЕХ карточек (всех тем, не только Marvel) и датой
+// последнего обновления каждой (<lastmod>). Для новой карточки "обновлена" по
+// факту означает "создана", поэтому берём оттуда кандидатов с недавним
+// lastmod, а затем у каждого смотрим саму карточку — там есть тема (чтобы
+// отобрать только Marvel) и точная дата "Entry created on ..." (см.
+// parseCreatedDate) для финальной проверки и сортировки.
 const RECENT_CACHE_TTL_MS = 3 * 60 * 60 * 1000; // 3 часа — не дёргать herobloks на каждый заход в приложение
+const RECENT_CANDIDATES_LIMIT = 250; // на всякий случай ограничиваем, сколько карточек-кандидатов проверяем за раз
 let recentCache = null; // { at, days, items }
 
-async function fetchMarvelListingHrefs() {
-  const url = "https://www.herobloks.com/figures/search/'theme=Marvel'";
+async function fetchSitemapEntries() {
+  const url = "https://www.herobloks.com/sitemap.xml";
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
   let res;
   try {
-    res = await fetch(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; MinifigStoreBot/1.0)" },
-      signal: controller.signal
-    });
+    res = await fetch(url, { signal: controller.signal });
   } finally {
     clearTimeout(timeoutId);
   }
-  if (!res.ok) throw new Error("herobloks вернул статус " + res.status);
-  const html = await res.text();
+  if (!res.ok) throw new Error("herobloks (sitemap) вернул статус " + res.status);
+  const xml = await res.text();
 
-  const hrefRe = /href="(\/figures\/\d+\/[^"]+)"/g;
-  const hrefs = [];
-  const seen = new Set();
+  const entries = [];
+  const re = /<loc>([^<]+)<\/loc>\s*<lastmod>([^<]+)<\/lastmod>/g;
   let m;
-  while ((m = hrefRe.exec(html))) {
-    const h = m[1];
-    if (seen.has(h)) continue;
-    seen.add(h);
-    hrefs.push(h);
+  while ((m = re.exec(xml))) {
+    entries.push({ url: m[1], lastmod: m[2] });
   }
-  return hrefs;
+  return entries;
 }
 
 /**
- * Возвращает фигурки Marvel, добавленные на herobloks.com за последние `days`
- * дней (по умолчанию 7), от самых новых к более старым. Результат кэшируется
- * на RECENT_CACHE_TTL_MS, чтобы не ходить на herobloks.com при каждом заходе
- * в мини-приложение.
+ * Возвращает фигурки Marvel, добавленные (или как минимум обновлённые —
+ * для новых карточек это по факту то же самое) на herobloks.com за
+ * последние `days` дней (по умолчанию 7), от самых новых к более старым.
+ * Результат кэшируется на RECENT_CACHE_TTL_MS.
  */
 async function getRecentlyAddedMarvel(days) {
   const wantDays = days || 7;
@@ -644,22 +640,32 @@ async function getRecentlyAddedMarvel(days) {
   }
 
   const cutoff = Date.now() - wantDays * 24 * 60 * 60 * 1000;
-  const hrefs = await fetchMarvelListingHrefs();
+  const entries = await fetchSitemapEntries();
+
+  const candidates = entries.filter(e => {
+    const t = Date.parse(e.lastmod);
+    return Number.isFinite(t) && t >= cutoff;
+  });
+  candidates.sort((a, b) => Date.parse(b.lastmod) - Date.parse(a.lastmod));
 
   const items = [];
-  for (const href of hrefs) {
+  for (const c of candidates.slice(0, RECENT_CANDIDATES_LIMIT)) {
+    let href;
+    try {
+      href = new URL(c.url).pathname;
+    } catch (e) {
+      continue;
+    }
     let details;
     try {
       details = await fetchFigureDetailsRaw(href);
     } catch (e) {
       continue; // одна неудачная карточка не должна ронять весь список
     }
+    if (!details.theme || details.theme.toLowerCase() !== "marvel") continue;
     if (!details.createdAt) continue;
     const createdTime = new Date(details.createdAt).getTime();
-    if (!Number.isFinite(createdTime)) continue;
-    // Список отсортирован от новых к старым, так что как только встретили
-    // карточку старше срока — дальше все будут ещё старше, можно остановиться.
-    if (createdTime < cutoff) break;
+    if (!Number.isFinite(createdTime) || createdTime < cutoff) continue;
     items.push({
       href,
       name: details.name,
@@ -671,6 +677,7 @@ async function getRecentlyAddedMarvel(days) {
     });
   }
 
+  items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   recentCache = { at: Date.now(), days: wantDays, items };
   return items;
 }
