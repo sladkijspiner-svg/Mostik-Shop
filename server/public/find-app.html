@@ -171,6 +171,14 @@
   .stat-name { flex: 1; font-size: 13px; min-width: 0; }
   .stat-name span { display: block; color: var(--hint); font-size: 11px; margin-top: 1px; }
   .stat-count { color: var(--hint); font-size: 12px; flex-shrink: 0; white-space: nowrap; }
+  .stat-owner-line { display: block; color: var(--link); font-size: 11px; margin-top: 2px; }
+  .stat-expand-btn {
+    display: block; width: 100%; margin-top: 8px; padding: 10px;
+    border-radius: 12px; border: 1px solid var(--card-border);
+    background: var(--card-bg); color: var(--link); font-size: 13px; font-weight: 600;
+    cursor: pointer; text-align: center;
+  }
+  .stat-zero { color: var(--hint); font-size: 12px; padding: 10px 6px 0; text-align: center; }
   .year-chart { display: flex; flex-direction: column; gap: 5px; }
   .year-row { display: flex; align-items: center; gap: 8px; }
   .year-label { width: 40px; flex-shrink: 0; font-size: 12px; color: var(--hint); }
@@ -761,6 +769,37 @@
     return analyticsLoading;
   }
 
+  // Склонение "человек/человека" и глагола "владеет/владеют" под число —
+  // "человек" в русском неправильно склоняется (родительный падеж множественного
+  // числа совпадает с именительным единственного: "5 человек", а не "человеков").
+  function peopleWord(n) {
+    const mod100 = n % 100;
+    const mod10 = n % 10;
+    if (mod100 >= 11 && mod100 <= 14) return "человек";
+    if (mod10 === 1) return "человек";
+    if (mod10 >= 2 && mod10 <= 4) return "человека";
+    return "человек";
+  }
+  function ownerVerb(n) {
+    const mod100 = n % 100;
+    const mod10 = n % 10;
+    if (mod10 === 1 && mod100 !== 11) return "владеет";
+    return "владеют";
+  }
+  function ownerPhrase(n) {
+    if (!n) return "Пока никто не владеет этой фигуркой";
+    return `${n} ${peopleWord(n)} ${ownerVerb(n)} этой фигуркой`;
+  }
+  // Склонение "фигурка/фигурки/фигурок" под число.
+  function figuresWord(n) {
+    const mod100 = n % 100;
+    const mod10 = n % 10;
+    if (mod100 >= 11 && mod100 <= 14) return "фигурок";
+    if (mod10 === 1) return "фигурка";
+    if (mod10 >= 2 && mod10 <= 4) return "фигурки";
+    return "фигурок";
+  }
+
   // Мировой топ (herobloks.com, "N users own this figure").
   function statRowHtml(f, index) {
     const brandSerial = `${f.brand || ""} ${f.serial || ""}`.trim();
@@ -768,8 +807,7 @@
       <div class="stat-row" data-href="${escapeHtml(f.href)}">
         <span class="stat-rank">${index + 1}</span>
         <div class="stat-thumb">${f.imageUrl ? `<img src="${f.imageUrl}" loading="lazy">` : ""}</div>
-        <div class="stat-name">${escapeHtml(f.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}</div>
-        <span class="stat-count">👤 ${f.owners}</span>
+        <div class="stat-name">${escapeHtml(f.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}<span class="stat-owner-line">${ownerPhrase(f.owners)}</span></div>
       </div>
     `;
   }
@@ -826,12 +864,25 @@
       `;
 
       // Раздел 2/3 — мировая статистика с herobloks.com (собирается раз в
-      // месяц в фоне, см. server/analytics.js).
+      // месяц в фоне, см. server/analytics.js). Топ показываем свёрнутым
+      // (первые TOP_COLLAPSED мест) с кнопкой «Показать весь топ» — раскрыть
+      // может каждый сам, не нужно сразу грузить длинный список.
       if (hasWorldData) {
+        const topOwners = data.topOwners || [];
+        const TOP_COLLAPSED = 5;
+        const visible = topOwners.slice(0, TOP_COLLAPSED);
+        const rest = topOwners.slice(TOP_COLLAPSED);
+        const zeroCount = typeof data.noOwnersCount === "number" ? data.noOwnersCount : null;
+
         blocks += `
           <div class="stat-block">
             <div class="stat-title">👑 Зал славы коллекционеров</div>
-            <div class="stat-list">${(data.topOwners || []).map((f, i) => statRowHtml(f, i)).join("") || '<div class="empty" style="padding:10px 0">Нет данных.</div>'}</div>
+            <div class="stat-list">${visible.map((f, i) => statRowHtml(f, i)).join("") || '<div class="empty" style="padding:10px 0">Нет данных.</div>'}</div>
+            ${rest.length ? `
+              <div class="stat-list stat-list-more" style="display:none">${rest.map((f, i) => statRowHtml(f, i + TOP_COLLAPSED)).join("")}</div>
+              <button type="button" class="stat-expand-btn" data-total="${topOwners.length}">Показать весь топ (${topOwners.length}) ▾</button>
+            ` : ""}
+            ${zeroCount !== null ? `<div class="stat-zero">😶 Никто не владеет: ${zeroCount} ${figuresWord(zeroCount)}</div>` : ""}
           </div>
           <div class="stat-block">
             <div class="stat-title">📅 По годам выпуска (до 2021)</div>
@@ -852,6 +903,18 @@
           showDetail({ href: row.getAttribute("data-href") }, renderHomeStats);
         });
       });
+      // Кнопка «Показать весь топ» — раскрывает список целиком, повторное
+      // нажатие сворачивает обратно.
+      const expandBtn = wrap.querySelector(".stat-expand-btn");
+      if (expandBtn) {
+        const moreList = wrap.querySelector(".stat-list-more");
+        const total = expandBtn.getAttribute("data-total");
+        expandBtn.addEventListener("click", () => {
+          const isHidden = moreList.style.display === "none";
+          moreList.style.display = isHidden ? "flex" : "none";
+          expandBtn.textContent = isHidden ? "Свернуть топ ▴" : `Показать весь топ (${total}) ▾`;
+        });
+      }
       contentEl.innerHTML = "";
       contentEl.appendChild(wrap);
     });
