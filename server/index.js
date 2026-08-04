@@ -213,6 +213,20 @@ app.get("/api/herobloks/analytics", (req, res) => {
   });
 });
 
+// Новинки Marvel за последнюю неделю — отдельно от большой мировой
+// статистики (см. analytics.js): тут не нужен обход всей базы, только первая
+// страница списка "Recently Added" с herobloks.com (см.
+// herobloks.getRecentlyAddedMarvel), результат кэшируется на пару часов.
+app.get("/api/herobloks/recent", async (req, res) => {
+  try {
+    const days = parseInt(req.query.days, 10) || 7;
+    const items = await herobloks.getRecentlyAddedMarvel(days);
+    res.json({ items, days });
+  } catch (e) {
+    res.status(500).json({ error: "fetch_failed" });
+  }
+});
+
 // Временный служебный эндпоинт — просто чтобы можно было посмотреть прогресс
 // сборки статистики (сколько фигурок уже обработано) без доступа к консоли
 // сервера. Ничего не меняет, только читает файл чекпоинта с диска.

@@ -451,6 +451,25 @@ function decodeHtmlEntities(str) {
 const DETAILS_CACHE = new Map();
 const DETAILS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 часов
 
+// Разбирает дату из подписи внизу страницы фигурки вида
+// "Entry created on 1st Aug 2026 by ..." -> ISO-строка даты (UTC, без
+// времени — время создания herobloks не публикует). null, если подписи нет
+// или формат не распознан.
+const MONTH_INDEX = {
+  jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+  jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+};
+function parseCreatedDate(html) {
+  const m = html.match(/Entry created on\s+(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)\s+(\d{4})/i);
+  if (!m) return null;
+  const day = parseInt(m[1], 10);
+  const monthIdx = MONTH_INDEX[m[2].slice(0, 3).toLowerCase()];
+  const year = parseInt(m[3], 10);
+  if (monthIdx === undefined || !Number.isFinite(day) || !Number.isFinite(year)) return null;
+  const d = new Date(Date.UTC(year, monthIdx, day));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 // Собственно загрузка и разбор страницы фигурки, без кэша — вынесена
 // отдельно, чтобы полный обход всей базы (analytics.js, ~6500+ фигурок) мог
 // пользоваться ею напрямую, не раздувая DETAILS_CACHE на весь обход разом
@@ -506,6 +525,11 @@ async function fetchFigureDetailsRaw(href) {
   const ownersMatch = html.match(/(\d+)\s+users?\s+owns?\s+this\s+figure/i);
   const owners = ownersMatch ? parseInt(ownersMatch[1], 10) : 0;
 
+  // В самом низу страницы herobloks.com пишет, когда карточку завели у них в
+  // базе — например "Entry created on 1st Aug 2026 by ...". Используется,
+  // чтобы находить недавно добавленные фигурки (см. getRecentlyAddedMarvel).
+  const createdAt = parseCreatedDate(html);
+
   const data = {
     name,
     basename: fields["Basename"] || null,
@@ -516,6 +540,7 @@ async function fetchFigureDetailsRaw(href) {
     owners,
     imageUrls,
     imageUrl: imageUrls[0] || null,
+    createdAt,
     pageUrl: url
   };
   return data;
@@ -565,6 +590,91 @@ function getAllFigures() {
   return buildNameList();
 }
 
+// ---- Новинки Marvel за последнюю неделю ----
+//
+// Страница поиска herobloks.com по теме (theme=Marvel) по умолчанию
+// отсортирована "Recently Added" — сверху самые недавно добавленные на сайт
+// карточки. Поэтому не нужно обходить всю базу: читаем только первую
+// страницу списка (~25-30 карточек, с запасом хватает на неделю обычного
+// темпа добавлений), для каждой смотрим точную дату добавления ("Entry
+// created on ...", см. parseCreatedDate) и останавливаемся, как только
+// встречаем карточку старше нужного срока.
+const RECENT_CACHE_TTL_MS = 3 * 60 * 60 * 1000; // 3 часа — не дёргать herobloks на каждый заход в приложение
+let recentCache = null; // { at, days, items }
+
+async function fetchMarvelListingHrefs() {
+  const url = "https://www.herobloks.com/figures/search/'theme=Marvel'";
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; MinifigStoreBot/1.0)" },
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  if (!res.ok) throw new Error("herobloks вернул статус " + res.status);
+  const html = await res.text();
+
+  const hrefRe = /href="(\/figures\/\d+\/[^"]+)"/g;
+  const hrefs = [];
+  const seen = new Set();
+  let m;
+  while ((m = hrefRe.exec(html))) {
+    const h = m[1];
+    if (seen.has(h)) continue;
+    seen.add(h);
+    hrefs.push(h);
+  }
+  return hrefs;
+}
+
+/**
+ * Возвращает фигурки Marvel, добавленные на herobloks.com за последние `days`
+ * дней (по умолчанию 7), от самых новых к более старым. Результат кэшируется
+ * на RECENT_CACHE_TTL_MS, чтобы не ходить на herobloks.com при каждом заходе
+ * в мини-приложение.
+ */
+async function getRecentlyAddedMarvel(days) {
+  const wantDays = days || 7;
+  if (recentCache && recentCache.days === wantDays && Date.now() - recentCache.at < RECENT_CACHE_TTL_MS) {
+    return recentCache.items;
+  }
+
+  const cutoff = Date.now() - wantDays * 24 * 60 * 60 * 1000;
+  const hrefs = await fetchMarvelListingHrefs();
+
+  const items = [];
+  for (const href of hrefs) {
+    let details;
+    try {
+      details = await fetchFigureDetailsRaw(href);
+    } catch (e) {
+      continue; // одна неудачная карточка не должна ронять весь список
+    }
+    if (!details.createdAt) continue;
+    const createdTime = new Date(details.createdAt).getTime();
+    if (!Number.isFinite(createdTime)) continue;
+    // Список отсортирован от новых к старым, так что как только встретили
+    // карточку старше срока — дальше все будут ещё старше, можно остановиться.
+    if (createdTime < cutoff) break;
+    items.push({
+      href,
+      name: details.name,
+      brand: details.brand,
+      serial: details.serial,
+      year: details.year,
+      imageUrl: details.imageUrl,
+      createdAt: details.createdAt
+    });
+  }
+
+  recentCache = { at: Date.now(), days: wantDays, items };
+  return items;
+}
+
 module.exports = {
   findFigureMatches,
   findFigureByName,
@@ -574,5 +684,6 @@ module.exports = {
   compactCode,
   marketplaceQuery,
   suggestNames,
-  getAllFigures
+  getAllFigures,
+  getRecentlyAddedMarvel
 };
