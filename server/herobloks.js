@@ -603,6 +603,11 @@ function getAllFigures() {
 // parseCreatedDate) для финальной проверки и сортировки.
 const RECENT_CACHE_TTL_MS = 3 * 60 * 60 * 1000; // 3 часа — не дёргать herobloks на каждый заход в приложение
 const RECENT_CANDIDATES_LIMIT = 250; // на всякий случай ограничиваем, сколько карточек-кандидатов проверяем за раз
+// Некоторые кастом-мастерские всё же указывают у себя что-то похожее на
+// артикул (Serial), поэтому автоматическая эвристика (по названию бренда +
+// наличию Serial) их не ловит — добавляем такие бренды сюда вручную по мере
+// обнаружения (сравнение без учёта регистра).
+const BLOCKED_BRANDS = ["firestar toys"];
 let recentCache = null; // { at, days, items }
 
 async function fetchSitemapEntries() {
@@ -685,6 +690,7 @@ async function getRecentlyAddedMarvel(days) {
       // многие сами прямо называются "... Custom(s)".
       if (!details.serial) continue;
       if (details.brand && /\blego\b|custom/i.test(details.brand)) continue;
+      if (details.brand && BLOCKED_BRANDS.includes(details.brand.toLowerCase())) continue;
       items.push({
         href,
         name: details.name,
