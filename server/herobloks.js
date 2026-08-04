@@ -458,9 +458,21 @@ async function fetchFigureDetails(href) {
   }
 
   const url = "https://www.herobloks.com" + href;
-  const res = await fetch(url, {
-    headers: { "User-Agent": "Mozilla/5.0 (compatible; MinifigStoreBot/1.0)" }
-  });
+  // Без явного таймаута обычный fetch может зависнуть на конкретной странице
+  // навсегда, если herobloks.com не отвечает — а при обходе всей базы это
+  // останавливает весь процесс (чекпоинт не двигается) вместо того, чтобы
+  // просто пропустить одну проблемную фигурку и пойти дальше.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  let res;
+  try {
+    res = await fetch(url, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; MinifigStoreBot/1.0)" },
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (!res.ok) throw new Error("herobloks вернул статус " + res.status);
   const html = await res.text();
 
