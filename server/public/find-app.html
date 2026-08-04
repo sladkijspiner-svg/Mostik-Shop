@@ -785,6 +785,22 @@
     return analyticsLoading;
   }
 
+  // Новинки Marvel за неделю — отдельный, лёгкий запрос (не весь обход базы,
+  // см. server/herobloks.js/getRecentlyAddedMarvel), кэшируется на клиенте на
+  // время сессии, как и остальная статистика на главном экране.
+  let recentCache = null;
+  let recentLoading = null;
+  function loadRecent() {
+    if (recentCache) return Promise.resolve(recentCache);
+    if (recentLoading) return recentLoading;
+    recentLoading = fetch("/api/herobloks/recent")
+      .then(res => res.json())
+      .then(data => { recentCache = data; return data; })
+      .catch(() => ({ items: [] }))
+      .finally(() => { recentLoading = null; });
+    return recentLoading;
+  }
+
   // Склонение "человек/человека" и глагола "владеет/владеют" под число —
   // "человек" в русском неправильно склоняется (родительный падеж множественного
   // числа совпадает с именительным единственного: "5 человек", а не "человеков").
@@ -840,6 +856,31 @@
     `;
   }
 
+  // Сколько дней назад добавили фигурку — для подписи в блоке новинок.
+  function daysAgoLabel(iso) {
+    if (!iso) return "";
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 0) return "сегодня";
+    if (days === 1) return "вчера";
+    const mod100 = days % 100, mod10 = days % 10;
+    let word = "дней";
+    if (!(mod100 >= 11 && mod100 <= 14)) {
+      if (mod10 === 1) word = "день";
+      else if (mod10 >= 2 && mod10 <= 4) word = "дня";
+    }
+    return `${days} ${word} назад`;
+  }
+
+  function newFigureRowHtml(f) {
+    const brandSerial = `${f.brand || ""} ${f.serial || ""}`.trim();
+    return `
+      <div class="stat-row" data-href="${escapeHtml(f.href)}">
+        <div class="stat-thumb">${f.imageUrl ? `<img src="${f.imageUrl}" loading="lazy">` : ""}</div>
+        <div class="stat-name">${escapeHtml(f.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}<span class="stat-owner-line">${daysAgoLabel(f.createdAt)}</span></div>
+      </div>
+    `;
+  }
+
   function yearBarsHtml(byYear) {
     if (!byYear || byYear.length === 0) return '<div class="empty" style="padding:10px 0">Нет данных по годам.</div>';
     const max = Math.max(...byYear.map(y => y.count));
@@ -856,15 +897,29 @@
     if (qInput.value.trim().length >= 2) return;
     showBack(null);
     contentEl.innerHTML = '<div class="loading"><div class="spinner"></div>Загружаю статистику…</div>';
-    loadAnalytics().then(data => {
+    Promise.all([loadAnalytics(), loadRecent()]).then(([data, recentData]) => {
       // Пока грузилось, человек мог начать печатать новый запрос — тогда эту
       // статистику показывать уже не нужно, результат поиска важнее.
       if (qInput.value.trim().length >= 2) return;
 
       const wishlistTop = (data && data.wishlistTop) || [];
       const hasWorldData = !!(data && data.topOwners);
+      const recentItems = (recentData && recentData.items) || [];
 
       let blocks = "";
+
+      // Раздел 0 — новинки Marvel за последнюю неделю с herobloks.com (лёгкий
+      // запрос, не требует сбора мировой статистики, см. server/herobloks.js).
+      blocks += `
+        <div class="stat-block">
+          <div class="stat-title">🆕 Новинки Marvel за неделю</div>
+          <div class="stat-list">${
+            recentItems.length
+              ? recentItems.map(f => newFigureRowHtml(f)).join("")
+              : '<div class="empty" style="padding:10px 0">За последнюю неделю новых фигурок не заметили.</div>'
+          }</div>
+        </div>
+      `;
 
       // Раздел 1 — что хотят купить наши собственные покупатели (всегда
       // доступен мгновенно, не зависит от сбора мировой статистики).
