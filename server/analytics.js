@@ -37,11 +37,18 @@ const herobloks = require("./herobloks");
 // при каждом обновлении кода, как раньше пропадали вишлисты.
 const ARCHIVE_DIR = path.join(__dirname, "data", "state", "analytics_archive");
 const CHECKPOINT_FILE = path.join(__dirname, "data", "state", "analytics_checkpoint.json");
+const AUTORESUME_FILE = path.join(__dirname, "data", "state", "analytics_autoresume.json");
 const CONCURRENCY = 2; // на маленьком тарифе Railway обход всей базы при
 // параллельности 6 упирался в лимит памяти контейнера и ронял весь процесс.
 const CHECKPOINT_EVERY = 100; // сохранять прогресс на диск каждые N фигурок
 const TOP_N = 20;
 const MAX_YEAR = 2020; // фигурки позже — сознательно не учитываем (см. выше)
+// Сколько раз подряд сервер попробует САМ продолжить прерванную падением
+// сборку при своих перезапусках, прежде чем сдаться и попросить запустить
+// /rebuildstats вручную. Важно, чтобы это число было заметно МЕНЬШЕ лимита
+// автоперезапусков самого Railway (10 на этом тарифе) — см. подробную
+// историю в index.js о том, как безусловный автозапуск уронил весь сайт.
+const MAX_AUTO_ATTEMPTS = 4;
 
 let building = false;
 
@@ -116,6 +123,33 @@ function saveCheckpoint(cp) {
   } catch (e) {
     console.error("analytics: не удалось сохранить чекпоинт на диск:", e.message);
   }
+}
+
+// Счётчик автоматических попыток продолжить сборку после падения — хранится
+// отдельно от самого чекпоинта прогресса, чтобы не путать одно с другим.
+function loadAutoResumeState(key) {
+  try {
+    const s = JSON.parse(fs.readFileSync(AUTORESUME_FILE, "utf8"));
+    if (s && s.month === key) return s;
+  } catch (e) {}
+  return { month: key, attempts: 0, notified: false };
+}
+
+function saveAutoResumeState(state) {
+  try {
+    fs.writeFileSync(AUTORESUME_FILE, JSON.stringify(state), "utf8");
+  } catch (e) {}
+}
+
+function clearAutoResumeState() {
+  try { fs.unlinkSync(AUTORESUME_FILE); } catch (e) {}
+}
+
+// Сбрасывает счётчик автопопыток — вызывается, когда админ сам запускает
+// /rebuildstats вручную, чтобы у него снова был полный запас автопопыток на
+// случай новых падений после его вмешательства.
+function resetAutoResume() {
+  clearAutoResumeState();
 }
 
 // Держит только TOP_N лучших элементов по cmp — не нужно хранить в памяти
@@ -248,11 +282,64 @@ function maybeAutoBuildMonthly() {
     .catch(e => console.error("analytics: ошибка при сборе статистики:", e.message));
 }
 
+// Безопасное автопродолжение прерванной падением сборки — вызывается один
+// раз при каждом старте сервера (с небольшой задержкой, см. index.js), но
+// НЕ запускает сборку с нуля сама по себе: только продолжает то, что уже
+// было один раз начато вручную командой /rebuildstats и прервалось падением
+// (т.е. на диске остался чекпоинт). Если это удаётся MAX_AUTO_ATTEMPTS раз
+// подряд — сдаётся и просит запустить /rebuildstats вручную, вместо того
+// чтобы пытаться бесконечно и упереться в лимит автоперезапусков Railway
+// (см. подробную историю в index.js — именно так однажды упал весь сайт).
+// notify(text) — необязательный колбэк, чтобы сообщить админу в Telegram.
+function maybeAutoResumeBuild(notify) {
+  const key = monthKey();
+
+  const existing = hasArchive(key) ? readArchive(key) : null;
+  if (existing && Array.isArray(existing.noOwnersList)) {
+    // Всё уже готово (в актуальном формате) — автоматизировать нечего.
+    clearAutoResumeState();
+    return;
+  }
+
+  const cp = loadCheckpoint(key);
+  if (!cp || building) return; // сборку ещё ни разу не запускали вручную — сами не начинаем
+
+  const state = loadAutoResumeState(key);
+  if (state.attempts >= MAX_AUTO_ATTEMPTS) {
+    if (!state.notified) {
+      state.notified = true;
+      saveAutoResumeState(state);
+      if (notify) {
+        notify(`Не получилось само собой досчитать статистику за ${key} — упало ${MAX_AUTO_ATTEMPTS} раз подряд. Дальше пытаться сам не буду (чтобы не уронить весь сайт) — запустите /rebuildstats вручную, когда будет минутка.`);
+      }
+    }
+    return;
+  }
+
+  state.attempts += 1;
+  saveAutoResumeState(state);
+  if (notify) {
+    notify(`Продолжаю сбор статистики за ${key} автоматически после перезапуска (попытка ${state.attempts}/${MAX_AUTO_ATTEMPTS})...`);
+  }
+
+  buildAnalytics(null, key)
+    .then(data => {
+      clearAutoResumeState();
+      if (notify) notify(`Готово! Архив за ${data.month} дособран автоматически. Фигурок учтено: ${data.totalFigures}.`);
+    })
+    .catch(() => {
+      // Тихо — если снова упадёт, попытка уже засчитана, следующий рестарт
+      // попробует ещё раз (пока не исчерпан MAX_AUTO_ATTEMPTS).
+    });
+}
+
 module.exports = {
   getCached,
   isBuilding,
   buildAnalytics,
   maybeAutoBuildMonthly,
+  maybeAutoResumeBuild,
+  resetAutoResume,
   listArchiveKeys,
   readArchive,
   monthKey,
