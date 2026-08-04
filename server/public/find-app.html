@@ -178,7 +178,23 @@
     background: var(--card-bg); color: var(--link); font-size: 13px; font-weight: 600;
     cursor: pointer; text-align: center;
   }
-  .stat-zero { color: var(--hint); font-size: 12px; padding: 10px 6px 0; text-align: center; }
+  .stat-zero-btn {
+    display: block; width: 100%; margin-top: 10px; padding: 10px;
+    border-radius: 12px; border: 1px solid var(--card-border);
+    background: var(--card-bg); color: var(--hint); font-size: 12px;
+    cursor: pointer; text-align: center;
+  }
+  .brand-filter { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .brand-chip {
+    border: 1px solid var(--card-border); background: var(--card-bg); color: var(--text);
+    border-radius: 999px; padding: 6px 12px; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .brand-chip.active { background: var(--button); color: var(--button-text); border-color: var(--button); }
+  .plain-row {
+    padding: 10px 14px; border-radius: 12px; font-size: 14px;
+    background: var(--card-bg); border: 1px solid var(--card-border); cursor: pointer;
+  }
+  .plain-row span { display: block; color: var(--hint); font-size: 12px; margin-top: 2px; }
   .year-chart { display: flex; flex-direction: column; gap: 5px; }
   .year-row { display: flex; align-items: center; gap: 8px; }
   .year-label { width: 40px; flex-shrink: 0; font-size: 12px; color: var(--hint); }
@@ -882,7 +898,7 @@
               <div class="stat-list stat-list-more" style="display:none">${rest.map((f, i) => statRowHtml(f, i + TOP_COLLAPSED)).join("")}</div>
               <button type="button" class="stat-expand-btn" data-total="${topOwners.length}">Показать весь топ (${topOwners.length}) ▾</button>
             ` : ""}
-            ${zeroCount !== null ? `<div class="stat-zero">😶 Никто не владеет: ${zeroCount} ${figuresWord(zeroCount)}</div>` : ""}
+            ${zeroCount !== null ? `<button type="button" class="stat-zero-btn">😶 Никто не владеет: ${zeroCount} ${figuresWord(zeroCount)} — посмотреть</button>` : ""}
           </div>
           <div class="stat-block">
             <div class="stat-title">📅 По годам выпуска (до 2021)</div>
@@ -915,9 +931,74 @@
           expandBtn.textContent = isHidden ? "Свернуть топ ▴" : `Показать весь топ (${total}) ▾`;
         });
       }
+      // Кнопка «Никто не владеет: N фигурок» — открывает список этих фигурок
+      // целиком, с фильтром по бренду-производителю.
+      const zeroBtn = wrap.querySelector(".stat-zero-btn");
+      if (zeroBtn) {
+        zeroBtn.addEventListener("click", () => renderNoOwnersView(null));
+      }
       contentEl.innerHTML = "";
       contentEl.appendChild(wrap);
     });
+  }
+
+  // Экран «Никто не владеет» — полный список фигурок из мировой статистики,
+  // у которых 0 владельцев на herobloks.com, с фильтром по бренду
+  // производителя (кнопки-чипы, отсортированные по алфавиту).
+  function noOwnerRowHtml(f) {
+    const brandSerial = `${f.brand || ""} ${f.serial || ""}`.trim();
+    return `
+      <div class="plain-row" data-href="${escapeHtml(f.href)}">
+        ${escapeHtml(f.name || "Фигурка")}${brandSerial ? `<span>${escapeHtml(brandSerial)}</span>` : ""}
+      </div>
+    `;
+  }
+
+  function renderNoOwnersView(brandFilter) {
+    showBack(resetSearch);
+    qInput.value = "";
+
+    const data = analyticsCache || {};
+    const list = data.noOwnersList || [];
+
+    if (list.length === 0) {
+      contentEl.innerHTML = '<div class="empty">Список пуст.</div>';
+      return;
+    }
+
+    const brandOf = f => f.brand || "Без бренда";
+    const brands = Array.from(new Set(list.map(brandOf))).sort((a, b) => a.localeCompare(b, "ru"));
+    const filtered = (brandFilter ? list.filter(f => brandOf(f) === brandFilter) : list)
+      .slice()
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "ru"));
+
+    const chipsHtml = [
+      `<button type="button" class="brand-chip${!brandFilter ? " active" : ""}" data-brand="">Все (${list.length})</button>`,
+      ...brands.map(b => {
+        const count = list.filter(f => brandOf(f) === b).length;
+        return `<button type="button" class="brand-chip${brandFilter === b ? " active" : ""}" data-brand="${escapeHtml(b)}">${escapeHtml(b)} (${count})</button>`;
+      })
+    ].join("");
+
+    const wrap = document.createElement("div");
+    wrap.innerHTML = `
+      <div class="brand-filter">${chipsHtml}</div>
+      <div class="group-list">${filtered.map(f => noOwnerRowHtml(f)).join("") || '<div class="empty" style="padding:10px 0">Нет фигурок этого бренда.</div>'}</div>
+    `;
+
+    wrap.querySelectorAll(".brand-chip").forEach(chip => {
+      chip.addEventListener("click", () => {
+        renderNoOwnersView(chip.getAttribute("data-brand") || null);
+      });
+    });
+    wrap.querySelectorAll(".plain-row").forEach(row => {
+      row.addEventListener("click", () => {
+        showDetail({ href: row.getAttribute("data-href") }, () => renderNoOwnersView(brandFilter));
+      });
+    });
+
+    contentEl.innerHTML = "";
+    contentEl.appendChild(wrap);
   }
 
   renderHomeStats();
