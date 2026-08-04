@@ -143,12 +143,13 @@ async function buildAnalytics(onProgress, targetKey) {
 
     let checkpoint = loadCheckpoint(key);
     if (!checkpoint || checkpoint.total !== list.length) {
-      checkpoint = { month: key, cursor: 0, total: list.length, topOwners: [], yearCounts: {} };
+      checkpoint = { month: key, cursor: 0, total: list.length, topOwners: [], yearCounts: {}, noOwnersCount: 0 };
     }
 
     let cursor = checkpoint.cursor;
     const topOwners = checkpoint.topOwners;
     const yearCounts = checkpoint.yearCounts;
+    let noOwnersCount = checkpoint.noOwnersCount || 0; // сколько фигурок (из учитываемых по году) — ни у кого нет
 
     if (onProgress && cursor > 0) onProgress(cursor, list.length);
 
@@ -175,6 +176,8 @@ async function buildAnalytics(onProgress, targetKey) {
               owners,
               imageUrl: details.imageUrl || null
             }, (a, b) => b.owners - a.owners);
+          } else {
+            noOwnersCount++;
           }
           yearCounts[year] = (yearCounts[year] || 0) + 1;
         } catch (e) {
@@ -185,7 +188,7 @@ async function buildAnalytics(onProgress, targetKey) {
       cursor = batchEnd;
 
       if (cursor % CHECKPOINT_EVERY < CONCURRENCY || cursor === list.length) {
-        saveCheckpoint({ month: key, cursor, total: list.length, topOwners, yearCounts });
+        saveCheckpoint({ month: key, cursor, total: list.length, topOwners, yearCounts, noOwnersCount });
       }
       if (onProgress && (cursor % 250 < CONCURRENCY || cursor === list.length)) {
         onProgress(cursor, list.length);
@@ -201,7 +204,8 @@ async function buildAnalytics(onProgress, targetKey) {
       builtAt: new Date().toISOString(),
       totalFigures: list.length,
       topOwners,
-      byYear
+      byYear,
+      noOwnersCount
     };
     fs.writeFileSync(archiveFilePath(key), JSON.stringify(data, null, 2), "utf8");
     try { fs.unlinkSync(CHECKPOINT_FILE); } catch (e) {}
