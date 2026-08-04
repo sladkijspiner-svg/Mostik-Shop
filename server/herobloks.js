@@ -451,12 +451,13 @@ function decodeHtmlEntities(str) {
 const DETAILS_CACHE = new Map();
 const DETAILS_CACHE_TTL_MS = 12 * 60 * 60 * 1000; // 12 часов
 
-async function fetchFigureDetails(href) {
-  const cached = DETAILS_CACHE.get(href);
-  if (cached && Date.now() - cached.at < DETAILS_CACHE_TTL_MS) {
-    return cached.data;
-  }
-
+// Собственно загрузка и разбор страницы фигурки, без кэша — вынесена
+// отдельно, чтобы полный обход всей базы (analytics.js, ~6500+ фигурок) мог
+// пользоваться ею напрямую, не раздувая DETAILS_CACHE на весь обход разом
+// (каждая фигурка там посещается ровно один раз, кэш ей не нужен, а
+// неограниченно растущий Map на маленьком тарифе Railway — вероятная причина
+// падений по памяти на середине обхода).
+async function fetchFigureDetailsRaw(href) {
   const url = "https://www.herobloks.com" + href;
   // Без явного таймаута обычный fetch может зависнуть на конкретной странице
   // навсегда, если herobloks.com не отвечает — а при обходе всей базы это
@@ -517,6 +518,17 @@ async function fetchFigureDetails(href) {
     imageUrl: imageUrls[0] || null,
     pageUrl: url
   };
+  return data;
+}
+
+// Версия с кэшем — используется обычным поиском/показом карточки, где одни
+// и те же фигурки могут запрашиваться повторно много раз подряд.
+async function fetchFigureDetails(href) {
+  const cached = DETAILS_CACHE.get(href);
+  if (cached && Date.now() - cached.at < DETAILS_CACHE_TTL_MS) {
+    return cached.data;
+  }
+  const data = await fetchFigureDetailsRaw(href);
   DETAILS_CACHE.set(href, { at: Date.now(), data });
   return data;
 }
@@ -558,6 +570,7 @@ module.exports = {
   findFigureByName,
   groupFiguresByName,
   fetchFigureDetails,
+  fetchFigureDetailsRaw,
   compactCode,
   marketplaceQuery,
   suggestNames,

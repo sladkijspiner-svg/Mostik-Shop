@@ -160,7 +160,10 @@ async function buildAnalytics(onProgress, targetKey) {
 
       await Promise.all(batch.map(async item => {
         try {
-          const details = await herobloks.fetchFigureDetails(item.href);
+          // fetchFigureDetailsRaw — без кэширования: при полном обходе базы
+          // каждая фигурка запрашивается ровно один раз, а кэш на 6500+
+          // записей только зря ест память маленького контейнера Railway.
+          const details = await herobloks.fetchFigureDetailsRaw(item.href);
           const yearRaw = details.year ? parseInt(details.year, 10) : null;
           const year = Number.isFinite(yearRaw) ? yearRaw : null;
           // Без года или позже MAX_YEAR — сознательно не учитываем.
