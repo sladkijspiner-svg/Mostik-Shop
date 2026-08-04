@@ -167,6 +167,10 @@ bot.onText(/^\/rebuildstats/, msg => {
     return;
   }
   const key = analytics.monthKey();
+  if (analytics.hasArchive(key)) {
+    bot.sendMessage(chatId, `Архив за ${key} уже собран и сохранён — пересобирать не нужно. Новый обход начнётся сам только в следующем месяце.`);
+    return;
+  }
   bot.sendMessage(chatId, `Начинаю (или продолжаю) сбор мировой статистики за ${key} — это может занять время, напишу, когда закончу. Если сервер вдруг перезапустится посреди процесса — просто отправьте команду ещё раз, прогресс не потеряется.`);
   analytics.buildAnalytics((done, total) => {
     if (done % 1500 === 0 && done < total) {

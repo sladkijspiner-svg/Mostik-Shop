@@ -234,5 +234,6 @@ module.exports = {
   maybeAutoBuildMonthly,
   listArchiveKeys,
   readArchive,
-  monthKey
+  monthKey,
+  hasArchive
 };
