@@ -648,42 +648,56 @@ async function getRecentlyAddedMarvel(days) {
   });
   candidates.sort((a, b) => Date.parse(b.lastmod) - Date.parse(a.lastmod));
 
+  // Раньше карточки-кандидаты проверялись по одной, строго последовательно
+  // (await в цикле) — до 250 отдельных запросов к herobloks.com подряд, из-за
+  // чего вся эта функция могла выполняться больше минуты (а на Railway это
+  // ещё и упиралось в таймаут шлюза, отдавая 502). Теперь то же самое, но
+  // несколькими параллельными "воркерами" — как в fetchWithConcurrency в
+  // index.js — на порядок быстрее, и по-прежнему без перегрузки herobloks.com.
+  const slice = candidates.slice(0, RECENT_CANDIDATES_LIMIT);
   const items = [];
-  for (const c of candidates.slice(0, RECENT_CANDIDATES_LIMIT)) {
-    let href;
-    try {
-      href = new URL(c.url).pathname;
-    } catch (e) {
-      continue;
+  const CONCURRENCY = 12;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < slice.length) {
+      const c = slice[cursor++];
+      let href;
+      try {
+        href = new URL(c.url).pathname;
+      } catch (e) {
+        continue;
+      }
+      let details;
+      try {
+        details = await fetchFigureDetailsRaw(href);
+      } catch (e) {
+        continue; // одна неудачная карточка не должна ронять весь список
+      }
+      if (!details.theme || details.theme.toLowerCase() !== "marvel") continue;
+      if (!details.createdAt) continue;
+      const createdTime = new Date(details.createdAt).getTime();
+      if (!Number.isFinite(createdTime) || createdTime < cutoff) continue;
+      // Официальный Lego и самодельные кастом-мастерские — не то, что здесь
+      // нужно (см. описание базы в шапке файла, туда их тоже никогда не
+      // включали). У официальных наборов Lego бренд буквально "Lego". У
+      // кастомных мастерских почти всегда нет артикула (Serial) — это не
+      // товар с кодом от производителя, а разовая самодельная работа; плюс
+      // многие сами прямо называются "... Custom(s)".
+      if (!details.serial) continue;
+      if (details.brand && /\blego\b|custom/i.test(details.brand)) continue;
+      items.push({
+        href,
+        name: details.name,
+        brand: details.brand,
+        serial: details.serial,
+        year: details.year,
+        imageUrl: details.imageUrl,
+        createdAt: details.createdAt
+      });
     }
-    let details;
-    try {
-      details = await fetchFigureDetailsRaw(href);
-    } catch (e) {
-      continue; // одна неудачная карточка не должна ронять весь список
-    }
-    if (!details.theme || details.theme.toLowerCase() !== "marvel") continue;
-    if (!details.createdAt) continue;
-    const createdTime = new Date(details.createdAt).getTime();
-    if (!Number.isFinite(createdTime) || createdTime < cutoff) continue;
-    // Официальный Lego и самодельные кастом-мастерские — не то, что здесь
-    // нужно (см. описание базы в шапке файла, туда их тоже никогда не
-    // включали). У официальных наборов Lego бренд буквально "Lego". У
-    // кастомных мастерских почти всегда нет артикула (Serial) — это не
-    // товар с кодом от производителя, а разовая самодельная работа; плюс
-    // многие сами прямо называются "... Custom(s)".
-    if (!details.serial) continue;
-    if (details.brand && /\blego\b|custom/i.test(details.brand)) continue;
-    items.push({
-      href,
-      name: details.name,
-      brand: details.brand,
-      serial: details.serial,
-      year: details.year,
-      imageUrl: details.imageUrl,
-      createdAt: details.createdAt
-    });
   }
+  const workers = Array.from({ length: Math.min(CONCURRENCY, slice.length) }, worker);
+  await Promise.all(workers);
 
   items.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   recentCache = { at: Date.now(), days: wantDays, items };
