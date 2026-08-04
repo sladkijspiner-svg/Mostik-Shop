@@ -142,14 +142,21 @@ async function buildAnalytics(onProgress, targetKey) {
     const list = herobloks.getAllFigures(); // [{href, brand, serial, name}]
 
     let checkpoint = loadCheckpoint(key);
-    if (!checkpoint || checkpoint.total !== list.length) {
-      checkpoint = { month: key, cursor: 0, total: list.length, topOwners: [], yearCounts: {}, noOwnersCount: 0 };
+    // Чекпоинты старого формата (до появления noOwnersList) хранили только
+    // счётчик, а не сами фигурки — по нему список не восстановить, поэтому
+    // при встрече такого чекпоинта обход начинаем заново, а не продолжаем
+    // с середины (иначе список получился бы неполным).
+    if (!checkpoint || checkpoint.total !== list.length || !Array.isArray(checkpoint.noOwnersList)) {
+      checkpoint = { month: key, cursor: 0, total: list.length, topOwners: [], yearCounts: {}, noOwnersList: [] };
     }
 
     let cursor = checkpoint.cursor;
     const topOwners = checkpoint.topOwners;
     const yearCounts = checkpoint.yearCounts;
-    let noOwnersCount = checkpoint.noOwnersCount || 0; // сколько фигурок (из учитываемых по году) — ни у кого нет
+    // Все фигурки (из учитываемых по году), которыми пока никто не владеет —
+    // не только счётчик, а сам список, чтобы можно было посмотреть его в
+    // мини-приложении и отфильтровать по бренду.
+    const noOwnersList = checkpoint.noOwnersList || [];
 
     if (onProgress && cursor > 0) onProgress(cursor, list.length);
 
@@ -180,7 +187,13 @@ async function buildAnalytics(onProgress, targetKey) {
               imageUrl: details.imageUrl || null
             }, (a, b) => b.owners - a.owners);
           } else {
-            noOwnersCount++;
+            noOwnersList.push({
+              href: item.href,
+              name: details.name || item.name,
+              brand: details.brand || item.brand,
+              serial: details.serial || item.serial,
+              year
+            });
           }
           yearCounts[year] = (yearCounts[year] || 0) + 1;
         } catch (e) {
@@ -191,7 +204,7 @@ async function buildAnalytics(onProgress, targetKey) {
       cursor = batchEnd;
 
       if (cursor % CHECKPOINT_EVERY < CONCURRENCY || cursor === list.length) {
-        saveCheckpoint({ month: key, cursor, total: list.length, topOwners, yearCounts, noOwnersCount });
+        saveCheckpoint({ month: key, cursor, total: list.length, topOwners, yearCounts, noOwnersList });
       }
       if (onProgress && (cursor % 250 < CONCURRENCY || cursor === list.length)) {
         onProgress(cursor, list.length);
@@ -208,7 +221,8 @@ async function buildAnalytics(onProgress, targetKey) {
       totalFigures: list.length,
       topOwners,
       byYear,
-      noOwnersCount
+      noOwnersCount: noOwnersList.length,
+      noOwnersList
     };
     fs.writeFileSync(archiveFilePath(key), JSON.stringify(data, null, 2), "utf8");
     try { fs.unlinkSync(CHECKPOINT_FILE); } catch (e) {}
