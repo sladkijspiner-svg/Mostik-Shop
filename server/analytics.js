@@ -49,6 +49,11 @@ const MAX_YEAR = 2020; // фигурки позже — сознательно �
 // автоперезапусков самого Railway (10 на этом тарифе) — см. подробную
 // историю в index.js о том, как безусловный автозапуск уронил весь сайт.
 const MAX_AUTO_ATTEMPTS = 4;
+// Версия формата архива/чекпоинта — увеличивается, когда в собираемые данные
+// добавляется новое поле (например картинки в noOwnersList), чтобы старые
+// архивы/чекпоинты, где этого поля ещё нет, надёжно распознавались как
+// устаревшие и пересобирались, а не молча использовались без него.
+const FORMAT_VERSION = 2;
 
 let building = false;
 
@@ -83,6 +88,15 @@ function listArchiveKeys() {
 
 function hasArchive(key) {
   return fs.existsSync(archiveFilePath(key));
+}
+
+// Готов ли архив за месяц и в актуальном ли он формате (см. FORMAT_VERSION) —
+// используется и автопродолжением, и ручной командой /rebuildstats, чтобы
+// решение "пересобирать или нет" принималось в одном месте.
+function isArchiveCurrent(key) {
+  if (!hasArchive(key)) return false;
+  const data = readArchive(key);
+  return !!data && data.formatVersion === FORMAT_VERSION;
 }
 
 function readArchive(key) {
@@ -176,12 +190,12 @@ async function buildAnalytics(onProgress, targetKey) {
     const list = herobloks.getAllFigures(); // [{href, brand, serial, name}]
 
     let checkpoint = loadCheckpoint(key);
-    // Чекпоинты старого формата (до появления noOwnersList) хранили только
-    // счётчик, а не сами фигурки — по нему список не восстановить, поэтому
-    // при встрече такого чекпоинта обход начинаем заново, а не продолжаем
-    // с середины (иначе список получился бы неполным).
-    if (!checkpoint || checkpoint.total !== list.length || !Array.isArray(checkpoint.noOwnersList)) {
-      checkpoint = { month: key, cursor: 0, total: list.length, topOwners: [], yearCounts: {}, noOwnersList: [] };
+    // Чекпоинты устаревшего формата (см. FORMAT_VERSION) по частично
+    // собранным данным не восстановить полностью (например в них может не
+    // хватать картинок у уже собранных фигурок) — в этом случае обход лучше
+    // начать заново, а не продолжать с середины неполными данными.
+    if (!checkpoint || checkpoint.total !== list.length || checkpoint.formatVersion !== FORMAT_VERSION) {
+      checkpoint = { month: key, formatVersion: FORMAT_VERSION, cursor: 0, total: list.length, topOwners: [], yearCounts: {}, noOwnersList: [] };
     }
 
     let cursor = checkpoint.cursor;
@@ -226,7 +240,8 @@ async function buildAnalytics(onProgress, targetKey) {
               name: details.name || item.name,
               brand: details.brand || item.brand,
               serial: details.serial || item.serial,
-              year
+              year,
+              imageUrl: details.imageUrl || null
             });
           }
           yearCounts[year] = (yearCounts[year] || 0) + 1;
@@ -238,7 +253,7 @@ async function buildAnalytics(onProgress, targetKey) {
       cursor = batchEnd;
 
       if (cursor % CHECKPOINT_EVERY < CONCURRENCY || cursor === list.length) {
-        saveCheckpoint({ month: key, cursor, total: list.length, topOwners, yearCounts, noOwnersList });
+        saveCheckpoint({ month: key, formatVersion: FORMAT_VERSION, cursor, total: list.length, topOwners, yearCounts, noOwnersList });
       }
       if (onProgress && (cursor % 250 < CONCURRENCY || cursor === list.length)) {
         onProgress(cursor, list.length);
@@ -251,6 +266,7 @@ async function buildAnalytics(onProgress, targetKey) {
 
     const data = {
       month: key,
+      formatVersion: FORMAT_VERSION,
       builtAt: new Date().toISOString(),
       totalFigures: list.length,
       topOwners,
@@ -294,8 +310,7 @@ function maybeAutoBuildMonthly() {
 function maybeAutoResumeBuild(notify) {
   const key = monthKey();
 
-  const existing = hasArchive(key) ? readArchive(key) : null;
-  if (existing && Array.isArray(existing.noOwnersList)) {
+  if (isArchiveCurrent(key)) {
     // Всё уже готово (в актуальном формате) — автоматизировать нечего.
     clearAutoResumeState();
     return;
@@ -343,5 +358,6 @@ module.exports = {
   listArchiveKeys,
   readArchive,
   monthKey,
-  hasArchive
+  hasArchive,
+  isArchiveCurrent
 };

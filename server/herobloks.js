@@ -666,6 +666,14 @@ async function getRecentlyAddedMarvel(days) {
     if (!details.createdAt) continue;
     const createdTime = new Date(details.createdAt).getTime();
     if (!Number.isFinite(createdTime) || createdTime < cutoff) continue;
+    // Официальный Lego и самодельные кастом-мастерские — не то, что здесь
+    // нужно (см. описание базы в шапке файла, туда их тоже никогда не
+    // включали). У официальных наборов Lego бренд буквально "Lego". У
+    // кастомных мастерских почти всегда нет артикула (Serial) — это не
+    // товар с кодом от производителя, а разовая самодельная работа; плюс
+    // многие сами прямо называются "... Custom(s)".
+    if (!details.serial) continue;
+    if (details.brand && /\blego\b|custom/i.test(details.brand)) continue;
     items.push({
       href,
       name: details.name,

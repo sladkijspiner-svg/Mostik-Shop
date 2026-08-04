@@ -167,12 +167,10 @@ bot.onText(/^\/rebuildstats/, msg => {
     return;
   }
   const key = analytics.monthKey();
-  // Если архив уже есть и в нём уже посчитано, сколько фигурок вообще никто
-  // не собирает (noOwnersCount) — пересобирать нечего, всё уже готово.
-  // Если архив старого формата (собран до появления этой цифры) — разрешаем
-  // пересобрать один раз, чтобы её досчитать.
-  const existing = analytics.hasArchive(key) ? analytics.readArchive(key) : null;
-  if (existing && Array.isArray(existing.noOwnersList)) {
+  // Если архив уже есть и в актуальном формате (см. analytics.js/FORMAT_VERSION)
+  // — пересобирать нечего, всё уже готово. Если формат устарел (например
+  // появилось новое поле вроде картинок) — разрешаем пересобрать один раз.
+  if (analytics.isArchiveCurrent(key)) {
     bot.sendMessage(chatId, `Архив за ${key} уже собран и сохранён — пересобирать не нужно. Новый обход начнётся сам только в следующем месяце.`);
     return;
   }
